@@ -104,6 +104,23 @@ official_rivers = REFERENCE_DATA.official_rivers.copy()
 MAP_ASSETS_PUBLIC_BASE = REFERENCE_DATA.map_assets_public_base
 MAP_ASSETS_VERSION = REFERENCE_DATA.map_assets_version
 
+
+def _prewarm_toponym_object() -> None:
+    """Fetch the optional R2 toponym index before the first map click needs it."""
+    try:
+        ensure_toponym_db_path(REFERENCE_DATA)
+    except Exception:
+        # Automatic naming is optional; a transient R2 failure must not stop startup.
+        pass
+
+
+if (
+    DATA_BACKEND == "r2"
+    and os.getenv("FLOOD_PREWARM_TOPONYM", "1").strip().lower() not in {"0", "false", "no"}
+):
+    threading.Thread(target=_prewarm_toponym_object, name="r2-toponym-prewarm", daemon=True).start()
+
+
 if official_basins.empty or official_basins.crs is None:
     raise RuntimeError("Layer Batas DAS resmi tidak tersedia atau tidak memiliki CRS.")
 if official_rivers.empty or official_rivers.crs is None:
