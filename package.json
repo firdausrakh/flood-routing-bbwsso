@@ -1,0 +1,13 @@
+{
+  "name": "penelusuran-banjir-bbwsso",
+  "version": "2.2.1",
+  "description": "Penelusuran Banjir BBWS Serayu Opak - WebGIS flood routing berbasis jaringan sungai dan hasil HEC-HMS",
+  "private": true,
+  "scripts": {
+    "build": "echo 'No build step required for Speed Insights'"
+  },
+  "dependencies": {
+    "@vercel/analytics": "^2.0.1",
+    "@vercel/speed-insights": "^2.0.0"
+  }
+}

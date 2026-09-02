@@ -1,0 +1,32 @@
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=80
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       libexpat1 \
+       ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /app/requirements.txt
+
+RUN /usr/local/bin/python -m pip install --upgrade pip \
+    && /usr/local/bin/python -m pip install -r /app/requirements.txt \
+    && test -x /usr/local/bin/gunicorn \
+    && /usr/local/bin/python -c "import rasterio; print('Rasterio import OK:', rasterio.__version__)"
+
+COPY api /app/api
+COPY templates /app/templates
+COPY static /app/static
+COPY gunicorn.conf.py /app/gunicorn.conf.py
+
+EXPOSE 80
+
+# Important for Vercel Container runtime:
+# do not rely on PATH or shell expansion in CMD.
+CMD ["/usr/local/bin/gunicorn", "--config", "/app/gunicorn.conf.py", "api.app:app"]

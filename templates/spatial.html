@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}Penelusuran Banjir Sungai{% endblock %}
+{% block body_class %}spatial-page{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" />
+{% if map_assets_public_base %}<link rel="preconnect" href="{{ map_assets_public_base }}" crossorigin>{% endif %}
+<link rel="stylesheet" href="/static/css/spatial.css?v=2.2.1-r5.1-five-class-flow" />
+{% endblock %}
+{% block content %}
+<main id="spatialWorkspace" class="webgis-shell">
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-scroll">
+      <div class="sidebar-title">
+        <div class="section-icon"><i data-lucide="route"></i></div>
+        <div class="sidebar-title-copy"><span class="eyebrow">ANALISIS SPASIAL</span><h1>Penelusuran Banjir</h1></div>
+        <button class="theme-toggle-btn sidebar-title-theme" id="themeToggleBtn" title="Ubah tema tampilan" aria-label="Ubah tema tampilan" type="button"><i data-lucide="moon" id="themeIcon"></i></button>
+        <button id="usageInfoBtn" class="sidebar-title-info" type="button" aria-label="Pemberitahuan penggunaan"><i data-lucide="info"></i></button>
+      </div>
+      <div class="sidebar-info-links">
+        <button id="definitionSidebarBtn" class="definition-link" type="button"><i data-lucide="circle-help"></i>Istilah & Definisi</button>
+        <button id="methodologySidebarBtn" class="definition-link" type="button"><i data-lucide="book-open-text"></i>Metodologi & Sumber Data</button>
+      </div>
+
+      <section class="panel-section point-selection-section flood-control-coordinate-section" aria-label="Pilih titik kontrol dari koordinat">
+        <div class="section-heading"><h2>Pilih Titik</h2></div>
+        <label>Koordinat <span class="muted-inline">(Lintang, Bujur)</span>
+          <input id="floodCoordinateInput" type="text" spellcheck="false" inputmode="text" placeholder="DD atau DMS" autocomplete="off" aria-describedby="floodCoordinateHint" />
+        </label>
+        <div id="floodCoordinateHint" class="coordinate-example">Contoh DD: <code>-7.339961, 110.209919</code><br>Contoh DMS: <code>7°20'23.9&quot;S 110°12'35.7&quot;E</code></div>
+        <button id="floodPreviewCoordinateBtn" class="btn btn-neutral full" type="button"><i data-lucide="map-pin"></i>Tampilkan Titik</button>
+      </section>
+
+      <section class="analysis-preferences settings-group-divider" aria-label="Skenario banjir dan preferensi angka">
+        <label class="settings-field" data-help="Memilih hasil precompute HEC-HMS berdasarkan kala ulang banjir."><span class="field-label-line">Banjir Kala Ulang <button class="info-tooltip" type="button" aria-label="Informasi banjir kala ulang">i</button></span><select id="floodReturnPeriodSelect" aria-label="Pilihan banjir kala ulang" disabled><option value="">Memuat skenario…</option></select></label>
+        <label class="settings-field" data-help="Memilih koma atau titik sebagai pemisah desimal pada tampilan koordinat."><span class="field-label-line">Pemisah desimal <button class="info-tooltip" type="button" aria-label="Informasi pemisah desimal">i</button></span><select id="floodDecimalSeparatorSelect" aria-label="Pilihan pemisah desimal"><option value="," selected>Koma (,)</option><option value=".">Titik (.)</option></select></label>
+      </section>
+
+      <details class="advanced panel-section flood-advanced-settings">
+        <summary><i data-lucide="sliders-horizontal"></i>Pengaturan lanjutan</summary>
+        <label class="settings-field" data-help="Jarak maksimum pencarian centerline reach2d di sekitar Titik Kontrol. Field name pada reach2d dapat mewakili elemen Reach maupun Subbasin; nearest line di dalam radius dipakai sebagai jalur model."><span class="field-label-line">Pencarian sungai terdekat <button class="info-tooltip" type="button" aria-label="Informasi pencarian sungai terdekat">i</button></span>
+          <select id="snapRadius">
+            <option value="100">100 m</option>
+            <option value="300" selected>300 m (bawaan)</option>
+            <option value="500">500 m</option>
+            <option value="1000">1 km</option>
+            <option value="2000">2 km</option>
+          </select>
+        </label>
+      </details>
+
+      <section class="panel-section outlet-section flood-primary-section flood-control-section" aria-label="Titik Kontrol">
+        <div class="section-heading-row">
+          <div><h2>Titik Kontrol <span id="floodPointCount">0</span></h2><div class="point-limit-note">Maksimal 10 titik<br>per sesi</div></div>
+          <div class="result-heading-actions">
+            <button id="floodToggleAllPointsBtn" class="text-button result-icon-button" type="button" aria-label="Sembunyikan semua titik kontrol" title="Sembunyikan semua titik kontrol" disabled><i data-lucide="eye"></i></button>
+            <button id="floodFocusAllPointsBtn" class="text-button focus-all-button result-icon-button" type="button" aria-label="Zoom semua titik kontrol" title="Zoom semua titik kontrol" disabled><i data-lucide="scan-search"></i></button>
+            <button id="floodClearPointsBtn" class="text-button danger-text-button result-stack-button" type="button" aria-label="Hapus semua titik kontrol" disabled><i data-lucide="trash-2"></i><span>Hapus<br>Semua</span></button>
+          </div>
+        </div>
+        <div id="floodPointList" class="point-list flood-point-list"><div class="empty-state">Belum ada titik kontrol.</div></div>
+        <div class="point-input-control-row spaced-add-point flood-add-control-row" role="group" aria-label="Kontrol penambahan titik kontrol">
+          <button id="floodAddPointBtn" class="btn btn-neutral add-point-session" type="button" aria-pressed="false"><i data-lucide="crosshair"></i>Mulai Tambah</button>
+        </div>
+        <div id="floodPointModeHint" class="coordinate-example">Tekan <b>Mulai Tambah</b>, lalu klik sungai. Anda juga dapat menampilkan koordinat dari bagian Pilih Titik terlebih dahulu.</div>
+        <div class="flood-window-launchers" aria-label="Tampilkan menu penelusuran banjir">
+          <button type="button" class="btn btn-neutral flood-window-launcher" data-flood-window="routing"><i data-lucide="waves"></i>Visualisasi Aliran</button>
+          <button type="button" class="btn btn-neutral flood-window-launcher" data-flood-window="comparison"><i data-lucide="git-compare-arrows"></i>Penelusuran Aliran</button>
+          <button type="button" class="btn btn-neutral flood-window-launcher" data-flood-window="chart"><i data-lucide="chart-no-axes-combined"></i>Hidrograf</button>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <section id="mapWrap" class="map-wrap">
+    <div id="map"></div>
+
+    <form id="mapSearchForm" class="map-search maplibregl-ctrl hidden" autocomplete="off">
+      <button id="sidebarSearchToggle" class="search-sidebar-toggle" type="button" title="Tampilkan/sembunyikan panel" aria-label="Tampilkan atau sembunyikan panel"><i data-lucide="panel-left-close"></i></button>
+      <input id="searchInput" type="search" placeholder="Cari" aria-label="Cari" />
+      <button type="submit" class="search-submit" title="Cari"><i data-lucide="search"></i></button>
+      <div id="searchResults" class="map-search-results hidden"></div>
+    </form>
+
+    <div id="mapToolbarControl" class="map-toolbar-control maplibregl-ctrl maplibregl-ctrl-group hidden" role="toolbar" aria-label="Alat peta">
+      <button id="zoomInBtn" type="button" title="Perbesar" aria-label="Perbesar"><i data-lucide="plus"></i></button>
+      <button id="zoomOutBtn" type="button" title="Perkecil" aria-label="Perkecil"><i data-lucide="minus"></i></button>
+      <button id="resetNorthBtn" type="button" title="Atur ulang arah" aria-label="Atur ulang arah"><i data-lucide="compass"></i></button>
+      <button id="fullscreenBtn" type="button" title="Layar penuh" aria-label="Layar penuh"><i data-lucide="maximize"></i></button>
+      <button id="homeBtn" type="button" title="Tampilkan seluruh wilayah" aria-label="Tampilkan seluruh wilayah"><i data-lucide="house"></i></button>
+      <button id="basemapBtn" type="button" title="Peta Dasar" aria-label="Peta Dasar"><i data-lucide="map"></i></button>
+      <button id="layerBtn" type="button" title="Layer dan tampilan" aria-label="Layer dan tampilan"><i data-lucide="layers-3"></i></button>
+      <button id="measureBtn" type="button" title="Penggaris" aria-label="Penggaris"><i data-lucide="ruler"></i></button>
+    </div>
+    <div id="coordReadout" class="coord-readout maplibregl-ctrl hidden">—</div>
+
+    <section id="floodRoutingPanel" class="flood-bottom-bar is-hidden" data-flood-window="routing" aria-live="polite">
+      <header class="flood-docked-header">
+        <div class="flood-window-title"><span class="flood-routing-kicker">VISUALISASI ALIRAN</span></div>
+        <div class="flood-window-head-actions"><button class="flood-window-hide" type="button" aria-label="Sembunyikan visualisasi aliran" title="Sembunyikan"><i data-lucide="x"></i></button></div>
+      </header>
+      <div class="flood-docked-body flood-bottom-body">
+        <div class="flood-routing-controls">
+          <div class="flood-playback-buttons" aria-label="Kontrol waktu visualisasi">
+            <button id="floodFastBackBtn" class="flood-playback-btn" type="button" title="Mundur cepat" aria-label="Mundur cepat" disabled><i data-lucide="rewind"></i></button>
+            <button id="floodPrevBtn" class="flood-playback-btn" type="button" title="Langkah sebelumnya" aria-label="Langkah sebelumnya" disabled><i data-lucide="skip-back"></i></button>
+            <button id="floodSlowerBtn" class="flood-playback-btn" type="button" title="Perlambat" aria-label="Perlambat"><i data-lucide="gauge"></i><span>−</span></button>
+            <button id="floodPlayBtn" class="flood-play-btn" type="button" aria-label="Putar animasi banjir" disabled><i data-lucide="play"></i></button>
+            <button id="floodFasterBtn" class="flood-playback-btn" type="button" title="Percepat" aria-label="Percepat"><i data-lucide="gauge"></i><span>+</span></button>
+            <button id="floodNextBtn" class="flood-playback-btn" type="button" title="Langkah berikutnya" aria-label="Langkah berikutnya" disabled><i data-lucide="skip-forward"></i></button>
+            <button id="floodFastForwardBtn" class="flood-playback-btn" type="button" title="Maju cepat" aria-label="Maju cepat" disabled><i data-lucide="fast-forward"></i></button>
+            <span id="floodSpeedLabel" class="flood-speed-label">1×</span>
+          </div>
+          <input id="floodTimeSlider" type="range" min="0" max="0" step="1" value="0" aria-label="Waktu simulasi" disabled />
+          <strong id="floodTimeLabel">—</strong>
+        </div>
+        <div id="floodRoutingStatus" class="flood-routing-status">Memuat hasil precompute HEC-HMS…</div>
+        <div class="flood-routing-legend flood-routing-legend-qratio" aria-label="Legenda kelas rasio debit terhadap debit puncak">
+          <span><i class="flood-legend-swatch q-baseflow"></i><b>&lt; 0,20</b><em>Debit awal/rendah</em></span>
+          <span><i class="flood-legend-swatch q-rising"></i><b>0,20–0,50</b><em>Rising Limb</em></span>
+          <span><i class="flood-legend-swatch q-near-peak"></i><b>0,50–0,85</b><em>Mendekati Puncak</em></span>
+          <span><i class="flood-legend-swatch q-peak"></i><b>0,85–1,00</b><em>Peak Discharge / Puncak</em></span>
+          <span><i class="flood-legend-swatch q-falling"></i><b>setelah Qp</b><em>Falling Limb / Resesi</em></span>
+        </div>
+        <small class="flood-routing-note">Warna/ketebalan mengikuti Q/Qp pada fase naik; setelah puncak ditampilkan sebagai Falling Limb / Resesi. Semua garis solid tanpa animasi.</small>
+      </div>
+    </section>
+
+    <div id="floodChartBackdrop" class="flood-chart-backdrop hidden" aria-hidden="true"></div>
+
+    <aside id="floodRightSidebar" class="flood-right-sidebar is-hidden" aria-label="Panel analisis penelusuran banjir">
+      <section id="floodObservationPanel" class="flood-side-panel is-hidden" data-flood-window="comparison" aria-live="polite">
+        <header class="flood-docked-header"><div class="flood-window-title"><span class="flood-routing-kicker">PENELUSURAN ALIRAN</span></div><div class="flood-window-head-actions"><span id="floodObservationCount" class="flood-routing-count">0 titik</span><button class="flood-window-hide" type="button" aria-label="Sembunyikan penelusuran aliran" title="Sembunyikan"><i data-lucide="x"></i></button></div></header>
+        <div class="flood-docked-body"><div id="floodObservationStatus" class="flood-routing-status">Tambahkan Titik Kontrol di sungai. Untuk jarak dan selisih waktu puncak gunakan minimal 2 titik.</div><details class="flood-comparison-section" open><summary><span>Titik Kontrol</span><i data-lucide="chevron-down"></i></summary><div id="floodObservationPointsSummary" class="flood-observation-summary"><div class="empty-state">Belum ada titik untuk dibandingkan.</div></div></details><details class="flood-comparison-section" open><summary><span>Jarak & selisih waktu puncak</span><i data-lucide="chevron-down"></i></summary><div id="floodObservationSegmentsSummary" class="flood-observation-summary"><div class="empty-state">Tambahkan minimal dua titik.</div></div></details><div id="floodObservationSummary" class="hidden" aria-hidden="true"></div></div>
+      </section>
+
+      <section id="floodChartPanel" class="flood-side-panel flood-chart-side-panel is-hidden" data-flood-window="chart" aria-live="polite">
+        <header class="flood-docked-header"><div class="flood-window-title"><span class="flood-routing-kicker">HIDROGRAF</span></div><div class="flood-chart-head-tools"><button id="floodChartDownloadBtn" class="flood-chart-download" type="button" title="Unduh data hidrograf dalam Excel" aria-label="Unduh data hidrograf .xlsx"><i data-lucide="file-spreadsheet"></i><span>Unduh (.xlsx)</span></button><div class="flood-window-head-actions"><button id="floodChartExpandBtn" class="flood-chart-reset" type="button" title="Perbesar grafik" aria-label="Perbesar grafik"><i data-lucide="maximize-2"></i></button><button id="floodChartResetBtn" class="flood-chart-reset" type="button" title="Reset pan/zoom" aria-label="Reset pan dan zoom"><i data-lucide="rotate-ccw"></i></button><button class="flood-window-hide" type="button" aria-label="Sembunyikan hidrograf" title="Sembunyikan"><i data-lucide="x"></i></button></div></div></header>
+        <div class="flood-docked-body flood-chart-body"><div class="flood-chart-help">Drag untuk pan sumbu waktu; wheel/pinch untuk zoom X. Skala Y tetap dikunci.</div><div id="floodChartHoverReadout" class="flood-chart-hover-readout" aria-live="polite">Arahkan kursor pada grafik untuk melihat debit pada waktu tertentu.</div><div id="floodObservationHydrograph" class="flood-observation-hydrograph"><canvas id="floodObservationChart" aria-label="Hidrograf titik sungai sesuai posisi hulu atau hilir"></canvas><div id="floodChartEmpty" class="empty-state">Hidrograf akan muncul setelah Q(t) titik tersedia.</div></div></div>
+      </section>
+    </aside>
+
+    <div id="layerPanel" class="map-panel layer-panel hidden">
+      <div class="panel-title-row"><strong>Layer & Tampilan</strong><button id="closeLayerPanel" class="panel-close" type="button"><i data-lucide="x"></i></button></div>
+      <div class="layer-group">
+        <label class="check-row"><input id="showHillshade" type="checkbox" /> Esri Hillshade</label>
+        <label class="range-row">Opasitas <input id="hillshadeOpacity" type="range" min="0" max="100" value="100" /><span id="hillshadeOpacityValue">100%</span></label>
+      </div>
+      <details class="layer-group layer-collapsible">
+        <summary class="layer-collapse-summary"><span class="layer-summary-leading"><button class="layer-eye-toggle" data-layer-group="basins" type="button" aria-label="Tampilkan atau sembunyikan Batas DAS"><i data-lucide="eye"></i></button><span>Batas DAS</span></span><span class="layer-summary-actions"><button id="basinSourceBtn" class="inline-info layer-summary-info" type="button" title="Sumber Batas DAS"><i data-lucide="info"></i></button><input id="basinColor" class="color-input layer-summary-color" type="color" value="#9b7300" aria-label="Warna Batas DAS" /><i data-lucide="chevron-down"></i></span></summary>
+        <div class="layer-collapsible-body"><label class="check-row"><input id="showBasins" type="checkbox" checked /> Tampilkan batas</label><label class="check-row"><input id="showBasinLabels" type="checkbox" checked /> Nama DAS</label></div>
+      </details>
+      <details class="layer-group layer-collapsible">
+        <summary class="layer-collapse-summary"><span class="layer-summary-leading"><button class="layer-eye-toggle" data-layer-group="rivers" type="button" aria-label="Tampilkan atau sembunyikan Jaringan Sungai"><i data-lucide="eye"></i></button><span>Jaringan Sungai</span></span><span class="layer-summary-actions"><input id="riverColor" class="color-input layer-summary-color" type="color" value="#0083d7" aria-label="Warna Jaringan Sungai" /><i data-lucide="chevron-down"></i></span></summary>
+        <div class="layer-collapsible-body">
+          <label class="check-row"><input id="showRivers" type="checkbox" checked /> Tampilkan jaringan</label>
+          <div class="official-river-options">
+            <label class="check-row"><input id="autoRiverZoom" type="checkbox" checked /> Otomatis sesuai zoom</label>
+            <div class="river-orders official-river-orders">
+              <label class="check-row"><input class="river-order-toggle" data-order="1" type="checkbox" checked /> Orde 1</label>
+              <label class="check-row"><input class="river-order-toggle" data-order="2" type="checkbox" checked /> Orde 2</label>
+              <label class="check-row"><input class="river-order-toggle" data-order="3" type="checkbox" checked /> Orde 3</label>
+              <label class="check-row"><input class="river-order-toggle" data-order="other" type="checkbox" checked /> Orde &gt; 3</label>
+            </div>
+          </div>
+          <label class="check-row"><input id="showRiverLabels" type="checkbox" checked /> Label sungai</label>
+        </div>
+      </details>
+      <div class="layer-group"><label class="range-row strong-range">Ketebalan garis <input id="lineWidth" type="range" min="0.8" max="5" step="0.2" value="2" /><span id="lineWidthValue">2.0 px</span></label></div>
+      <div class="layer-group layer-actions"><button id="resetColorsBtn" class="btn btn-neutral full reset-colors-btn" type="button"><i data-lucide="rotate-ccw"></i>Reset</button></div>
+    </div>
+
+    <div id="basemapModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="basemapModalTitle">
+      <div class="modal-card basemap-modal">
+        <div class="modal-head"><div><span class="eyebrow">TAMPILAN PETA</span><h2 id="basemapModalTitle">Peta Dasar</h2></div><button id="closeBasemapModal" class="modal-close" type="button" aria-label="Tutup"><i data-lucide="x"></i></button></div>
+        <button id="noBasemapBtn" class="no-basemap-option" type="button"><i data-lucide="layers-2"></i><span><b>Tanpa Peta Dasar</b></span></button>
+        <div id="basemapGallery" class="basemap-gallery">
+          <button class="basemap-card active" type="button" data-basemap="world-topo" aria-pressed="true"><span class="basemap-thumb basemap-thumb-world-topo"></span><span class="basemap-card-label">Esri World Topographic</span></button>
+          <button class="basemap-card" type="button" data-basemap="esri-satellite"><span class="basemap-thumb basemap-thumb-esri-satellite"></span><span class="basemap-card-label">Esri Satellite</span></button>
+          <button class="basemap-card" type="button" data-basemap="osm"><span class="basemap-thumb basemap-thumb-osm"></span><span class="basemap-card-label">OpenStreetMap</span></button>
+          <button class="basemap-card" type="button" data-basemap="google-maps"><span class="basemap-thumb basemap-thumb-google-maps"></span><span class="basemap-card-label">Google Maps</span></button>
+          <button class="basemap-card" type="button" data-basemap="google-satellite"><span class="basemap-thumb basemap-thumb-google-satellite"></span><span class="basemap-card-label">Google Satellite</span></button>
+          <button class="basemap-card" type="button" data-basemap="rbi"><span class="basemap-thumb basemap-thumb-rbi"></span><span class="basemap-card-label">Peta Rupabumi Indonesia</span></button>
+          <button class="basemap-card" type="button" data-basemap="esri-dark-gray"><span class="basemap-thumb basemap-thumb-esri-dark"></span><span class="basemap-card-label">Esri Dark Gray Canvas</span></button>
+          <button class="basemap-card" type="button" data-basemap="esri-light-gray"><span class="basemap-thumb basemap-thumb-esri-light"></span><span class="basemap-card-label">Esri Light Gray Canvas</span></button>
+          <button class="basemap-card" type="button" data-basemap="opentopomap"><span class="basemap-thumb basemap-thumb-opentopo"></span><span class="basemap-card-label">OpenTopoMap</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div id="measurePanel" class="map-panel measure-panel hidden"><strong>Penggaris</strong><div id="measureText">Klik titik pertama pada peta.</div><button id="clearMeasureBtn" type="button"><i data-lucide="trash-2"></i>Hapus pengukuran</button></div>
+
+
+    <div id="floodAddPointModal" class="modal-backdrop flood-add-map-popup hidden" role="dialog" aria-modal="false" aria-labelledby="floodAddPointModalTitle" aria-hidden="true">
+      <div class="modal-card flood-add-point-modal">
+        <div class="modal-head flood-add-modal-head"><div><h2 id="floodAddPointModalTitle">Tambahkan Titik</h2></div></div>
+        <div class="flood-add-coord-row"><code id="floodAddRequestedCoords">—</code><button id="floodAddCopyCoordsBtn" class="flood-copy-square" type="button" title="Salin koordinat" aria-label="Salin koordinat"><i data-lucide="copy"></i></button></div>
+        <div class="flood-add-snapped">Titik aliran: <code id="floodAddSnappedCoords">—</code></div>
+        <div class="flood-add-identity"><strong id="floodAddRiverName">Sungai</strong><span id="floodAddBasinName">DAS —</span></div>
+        <div class="flood-add-info"><i data-lucide="move-horizontal"></i><span>Titik aliran berjarak <b id="floodAddSnapDistance">—</b> dari titik pilihan</span></div>
+        <div class="flood-add-warning"><i data-lucide="triangle-alert"></i><span>Titik akan digeser <b id="floodAddSnapWarningDistance">—</b> ke jalur aliran terdekat.</span></div>
+        <label class="flood-add-name-label point-name-editor">Nama titik<input id="floodAddPointName" type="text" maxlength="25" autocomplete="off" /><span id="floodAddPointNameWarning" class="flood-add-name-warning point-name-limit-hint hidden" role="status">Maksimal 25 karakter.</span></label>
+        <div id="floodAddPointNameHint" class="flood-add-name-hint">Nama otomatis: —</div>
+        <div class="flood-add-actions"><button id="floodAddPointCancelBottomBtn" class="btn btn-neutral" type="button">Batal</button><button id="floodAddPointCommitBtn" class="btn btn-primary" type="button">Tambahkan</button></div>
+      </div>
+    </div>
+
+    <div id="modelUnavailableModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modelUnavailableTitle">
+      <div class="modal-card warning-modal"><div class="warning-icon"><i data-lucide="triangle-alert"></i></div><h2 id="modelUnavailableTitle">Data Pemodelan Banjir Kala Ulang Belum Tersedia</h2><p>Penelusuran Banjir Tidak Dapat Diproses</p><button id="acceptModelUnavailable" class="btn btn-primary" type="button">Mengerti</button></div>
+    </div>
+    <div id="usageNoticeModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="usageNoticeTitle">
+      <div class="modal-card warning-modal usage-notice-modal"><div class="warning-icon neutral-icon"><i data-lucide="info"></i></div><span class="eyebrow">PEMBERITAHUAN PENGGUNAAN</span><h2 id="usageNoticeTitle">Hasil Penelusuran Bersifat Model</h2><p>Informasi pada peta dan grafik adalah hasil perkiraan dari model banjir. Hasil ini membantu melihat pola aliran, perubahan debit, dan perkiraan waktu datangnya puncak banjir di sepanjang sungai. Gunakan hasilnya sebagai bahan pertimbangan, bukan sebagai satu-satunya dasar keputusan.</p><button id="acceptUsageNotice" class="btn btn-primary" type="button">Mengerti</button></div>
+    </div>
+
+    <div id="definitionModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-card definition-modal hydrology-definition-modal">
+        <div class="modal-head"><div><span class="eyebrow">REFERENSI</span><h2>Istilah & Definisi</h2></div><button id="closeDefinitionModal" class="modal-close" type="button"><i data-lucide="x"></i></button></div>
+        <figure class="hydrograph-definition-figure" aria-labelledby="hydrographFigureTitle">
+          <figcaption id="hydrographFigureTitle"><b>Bagian-bagian Hidrograf / Hydrograph Components</b><span>Skema konseptual untuk membantu membaca istilah yang digunakan pada aplikasi.</span></figcaption>
+          <svg viewBox="0 0 760 330" role="img" aria-label="Ilustrasi hidrograf yang menunjukkan baseflow, rising limb, peak discharge, time to peak, recession limb, dan waktu">
+            <defs><marker id="hydroArrowComponents" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z"/></marker></defs>
+            <line class="hydro-axis" x1="70" y1="278" x2="720" y2="278"/><line class="hydro-axis" x1="70" y1="278" x2="70" y2="38"/>
+            <line class="hydro-base-line" x1="72" y1="238" x2="704" y2="238"/>
+            <path class="hydro-curve" d="M72 238 C150 236 198 231 242 214 C290 194 318 128 354 75 C373 48 398 51 418 80 C452 128 478 175 525 205 C574 234 632 241 704 244"/>
+            <line class="hydro-guide" x1="388" y1="58" x2="388" y2="278"/><circle class="hydro-peak" cx="388" cy="58" r="5"/>
+            <text class="hydro-label" x="100" y="230">Debit awal / rendah</text>
+            <text class="hydro-label" x="246" y="150">Hidrograf naik</text><text class="hydro-label small" x="246" y="165">Rising limb</text>
+            <text class="hydro-label" x="404" y="54">Debit puncak (Qp)</text><text class="hydro-label small" x="404" y="69">Peak discharge</text>
+            <text class="hydro-label" x="515" y="173">Hidrograf turun / resesi</text><text class="hydro-label small" x="515" y="188">Recession / falling limb</text>
+            <line class="hydro-arrow-line" x1="85" y1="300" x2="384" y2="300" marker-end="url(#hydroArrowComponents)"/><text class="hydro-label" x="192" y="319">Waktu menuju puncak / Time to peak</text>
+            <text class="hydro-axis-label rotate" x="20" y="188">Debit / Discharge</text>
+          </svg>
+        </figure>
+        <figure class="hydrograph-definition-figure hydrology-concept-figure" aria-labelledby="floodRoutingFigureTitle">
+          <figcaption id="floodRoutingFigureTitle"><b>Penelusuran Banjir / Flood Routing</b><span>Dua hidrograf memperlihatkan gelombang banjir yang tiba lebih lambat dan teredam dari hulu ke hilir.</span></figcaption>
+          <svg viewBox="0 0 760 300" role="img" aria-label="Ilustrasi flood routing dari hulu ke hilir dengan dua hidrograf berbeda waktu puncak dan debit puncak">
+            <defs><marker id="hydroArrowRouting" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z"/></marker></defs>
+            <line class="hydro-axis" x1="72" y1="250" x2="716" y2="250"/><line class="hydro-axis" x1="72" y1="250" x2="72" y2="36"/>
+            <path class="hydro-curve upstream" d="M74 234 C132 234 168 228 204 198 C226 178 246 124 266 88 C279 64 298 58 314 72 C340 97 356 147 382 184 C410 221 454 232 522 235"/>
+            <path class="hydro-curve downstream" d="M74 236 C166 236 224 230 278 207 C322 188 356 155 386 128 C412 105 440 100 464 112 C494 127 518 161 548 189 C584 221 632 232 704 236"/>
+            <line class="hydro-guide upstream" x1="291" y1="58" x2="291" y2="250"/><line class="hydro-guide downstream" x1="436" y1="100" x2="436" y2="250"/>
+            <circle class="hydro-peak upstream" cx="291" cy="58" r="5"/><circle class="hydro-peak downstream" cx="436" cy="100" r="5"/>
+            <text class="hydro-label" x="210" y="52">Hulu / Upstream</text>
+            <text class="hydro-label small" x="210" y="67">Qp lebih besar, puncak lebih cepat</text>
+            <text class="hydro-label" x="458" y="94">Hilir / Downstream</text>
+            <text class="hydro-label small" x="458" y="109">Qp lebih kecil, puncak lebih lambat</text>
+            <line class="hydro-arrow-line" x1="291" y1="270" x2="436" y2="270" marker-end="url(#hydroArrowRouting)"/>
+            <text class="hydro-label" x="314" y="289">Selisih waktu puncak hidrograf</text>
+            <text class="hydro-axis-label rotate" x="20" y="182">Debit / Discharge</text>
+          </svg>
+        </figure>
+        <figure class="hydrograph-definition-figure hydrology-concept-figure" aria-labelledby="lagTcFigureTitle">
+          <figcaption id="lagTcFigureTitle"><b>Hujan–Limpasan, Time Lag, dan Time of Concentration</b><span>Hyetograf hujan efektif, hidrograf limpasan, dan waktu-waktu kunci yang umum dipakai pada hidrologi banjir.</span></figcaption>
+          <svg viewBox="0 0 760 390" role="img" aria-label="Ilustrasi hyetograf dan hidrograf untuk menjelaskan time lag dan time of concentration">
+            <defs><marker id="hydroArrowLag" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z"/></marker></defs>
+            <line class="hydro-axis" x1="72" y1="132" x2="716" y2="132"/><line class="hydro-axis" x1="72" y1="132" x2="72" y2="30"/>
+            <rect class="hyeto-bar" x="120" y="76" width="28" height="56"/><rect class="hyeto-bar" x="170" y="58" width="28" height="74"/><rect class="hyeto-bar" x="220" y="42" width="28" height="90"/><rect class="hyeto-bar" x="270" y="64" width="28" height="68"/><rect class="hyeto-bar" x="320" y="88" width="28" height="44"/>
+            <text class="hydro-label" x="76" y="22">Hyetograf / Effective rainfall</text>
+            <text class="hydro-axis-label rotate" x="16" y="90">Intensitas hujan</text>
+            <line class="hydro-axis" x1="72" y1="320" x2="716" y2="320"/><line class="hydro-axis" x1="72" y1="320" x2="72" y2="162"/>
+            <path class="hydro-curve runoff" d="M74 304 C150 304 194 299 236 284 C282 267 320 230 352 194 C374 171 400 162 426 177 C464 198 488 242 528 272 C570 304 624 311 704 313"/>
+            <circle class="hydro-peak runoff" cx="398" cy="164" r="5"/>
+            <line class="hydro-guide" x1="234" y1="42" x2="234" y2="320"/>
+            <line class="hydro-guide" x1="398" y1="164" x2="398" y2="320"/>
+            <line class="hydro-guide" x1="494" y1="184" x2="494" y2="320"/>
+            <line class="hydro-arrow-line" x1="234" y1="342" x2="398" y2="342" marker-end="url(#hydroArrowLag)"/>
+            <text class="hydro-label" x="262" y="357">Time lag / waktu jeda</text>
+            <line class="hydro-arrow-line" x1="120" y1="371" x2="494" y2="371" marker-end="url(#hydroArrowLag)"/>
+            <text class="hydro-label" x="252" y="386">Time of concentration (Tc)</text>
+            <text class="hydro-label" x="420" y="158">Peak discharge / Qp</text>
+            <text class="hydro-axis-label rotate" x="20" y="250">Debit limpasan</text>
+          </svg>
+        </figure>
+        <div class="hydrology-term-grid">
+          <article><h3>Penelusuran Banjir <span>Flood Routing</span></h3><p>Perubahan bentuk dan waktu gelombang banjir saat bergerak dari hulu ke hilir.</p></article>
+          <article><h3>Hidrograf <span>Hydrograph</span></h3><p>Grafik debit terhadap waktu yang memperlihatkan respons aliran dari kondisi awal, naik, puncak, hingga resesi.</p></article>
+          <article><h3>Debit <span>Discharge, Q</span></h3><p>Volume air yang melewati penampang per satuan waktu.</p></article>
+          <article><h3>Aliran dasar <span>Baseflow</span></h3><p>Aliran yang sudah ada sebelum respons banjir meningkat.</p></article>
+          <article><h3>Hidrograf naik <span>Rising Limb</span></h3><p>Bagian hidrograf ketika debit meningkat menuju puncak.</p></article>
+          <article><h3>Debit puncak (Qp) <span>Peak Discharge</span></h3><p>Debit maksimum pada hidrograf.</p></article>
+          <article><h3>Waktu puncak <span>Time to Peak</span></h3><p>Waktu dari awal acuan hingga debit mencapai puncak.</p></article>
+          <article><h3>Hidrograf turun / resesi <span>Recession / Falling Limb</span></h3><p>Bagian setelah puncak ketika debit menurun menuju aliran dasar.</p></article>
+          <article><h3>Selisih waktu puncak <span>Peak Lag</span></h3><p>Perbedaan waktu puncak hidrograf antar lokasi. Metrik ini bukan travel time partikel atau waktu tempuh hidraulik.</p></article>
+          <article><h3>Waktu konsentrasi (Tc) <span>Time of Concentration</span></h3><p>Waktu aliran dari titik hidrologis terjauh untuk mencapai outlet.</p></article>
+          <article><h3>Waktu jeda <span>Lag Time</span></h3><p>Selang waktu antara masukan hujan efektif dan respons debit.</p></article>
+          <article><h3>Hujan efektif <span>Hyetograph / Effective Rainfall</span></h3><p>Hujan yang menjadi masukan pembentukan limpasan.</p></article>
+          <article><h3>Limpasan <span>Runoff</span></h3><p>Bagian air hujan yang mengalir menuju jaringan sungai dan menaikkan hidrograf.</p></article>
+          <article><h3>Hulu dan hilir <span>Upstream / Downstream</span></h3><p>Hulu adalah arah sumber aliran; hilir mengikuti aliran menuju outlet.</p></article>
+        </div>
+      </div>
+    </div>
+
+    <div id="methodologyModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-card definition-modal methodology-modal">
+        <div class="modal-head"><div><span class="eyebrow">INFORMASI TEKNIS</span><h2>Metodologi & Sumber Data</h2></div><button id="closeMethodologyModal" class="modal-close" type="button" aria-label="Tutup"><i data-lucide="x"></i></button></div>
+        <article>
+          <h3>Posisi aplikasi</h3>
+          <p>Aplikasi ini adalah <b>WebGIS inspeksi hidrograf dan jaringan routing hasil HEC-HMS</b>. Browser menampilkan hasil simulasi yang telah diproses sebelumnya; browser tidak menghitung hujan-limpasan, routing, muka air, kedalaman, atau luas genangan secara live.</p>
+          <div class="app-definition-note"><b>Interpretasi penting:</b> hasil yang terlihat adalah keluaran model. Gunakan bersama verifikasi lapangan, data operasi terbaru, dan penilaian hidrologi/hidraulik yang sesuai.</div>
+        </article>
+        <article>
+          <h3>Rantai pemodelan</h3>
+          <p>Secara konseptual, model HEC-HMS membentuk limpasan dari hujan pada sub-DAS, menggabungkannya di jaringan, lalu menelusurkan debit pada reach menuju outlet.</p>
+          <ol>
+            <li><b>Loss:</b> kehilangan hujan dikonfigurasi di Basin Model, termasuk metode seperti SCS Curve Number.</li>
+            <li><b>Transform:</b> hujan efektif diubah menjadi limpasan langsung menggunakan metode transform yang tersimpan pada model.</li>
+            <li><b>Baseflow:</b> kontribusi aliran dasar mengikuti konfigurasi baseflow model, bila tersedia.</li>
+            <li><b>Routing:</b> hidrograf dirambatkan dari hulu ke hilir mengikuti metode routing dan parameter setiap reach.</li>
+          </ol>
+          <p>Jenis metode dan parameter adalah bagian dari model HEC-HMS masing-masing, bukan asumsi baru yang dihitung oleh aplikasi web.</p>
+        </article>
+        <article>
+          <h3>Representasi jaringan dan pembacaan debit</h3>
+          <p>Centerline <code>reach2d</code> dan poligon <code>subbasin2d</code> dibaca dari SQLite. Atribut <code>name</code> dicocokkan dengan ID elemen pada <code>.basin</code>, lalu topologi upstream–downstream dipakai untuk menelusuri jaringan.</p>
+          <p>Seri waktu <code>Q(t)</code> dibaca dari hasil HEC-DSS yang sudah diprecompute. Titik di dalam reach menggunakan seri endpoint sebagai <i>proxy</i> sesuai aturan posisi titik; ini bukan interpolasi hidraulik sepanjang reach.</p>
+        </article>
+        <article>
+          <h3>Makna skenario dan metrik</h3>
+          <p>Pilihan 2, 10, dan 25 tahun adalah <b>label skenario pada keluaran model</b>. Tampilan ini tidak menjadi bukti tersendiri tentang periode data, distribusi frekuensi, AEP, atau ketidakpastian.</p>
+          <p>“Selisih waktu puncak” adalah perbedaan waktu puncak dua hidrograf pada resolusi data 5 menit—bukan travel time partikel atau waktu tempuh hidraulik. Aplikasi juga tidak menampilkan inundasi, kedalaman, kecepatan, atau batas genangan.</p>
+        </article>
+        <article>
+          <h3>Hierarki sumber data</h3>
+          <ul>
+            <li><b>Basin Model HEC-HMS (<code>.basin</code>):</b> elemen, konektivitas, konfigurasi metode, dan parameter model.</li>
+            <li><b>Database spasial proyek (<code>.sqlite</code>):</b> geometri reach/sub-DAS dan atribut yang tersedia.</li>
+            <li><b>Hasil HEC-DSS (<code>.dss</code>):</b> seri debit skenario yang menjadi dasar hidrograf.</li>
+            <li><b>Layer referensi:</b> batas DAS, jaringan sungai, dan toponim untuk kartografi serta penamaan; tidak mengubah hasil routing.</li>
+            <li><b>Data runtime <i>precomputed</i>:</b> GeoJSON, topologi, metadata, dan berkas seri debit terkompresi untuk akses web yang cepat.</li>
+          </ul>
+        </article>
+        <article>
+          <h3>Alur data ke antarmuka</h3>
+          <p><code>.basin + .sqlite + .dss</code> → preprocessing → data runtime <i>precomputed</i> → peta, snapping, hidrograf, dan penelusuran upstream.</p>
+          <p>Preprocessing mengubah format dan struktur penyimpanan, bukan metode maupun hasil perhitungan HEC-HMS. Model sumber dan hasil runtime perlu diproses ulang apabila sumber berubah.</p>
+        </article>
+        <article>
+          <h3>Referensi dan batasan penggunaan</h3>
+          <p>Rujukan metode utama adalah dokumentasi teknis resmi <b>USACE HEC-HMS</b>. Validitas ilmiah keluaran tetap bergantung pada kualitas input, konfigurasi, kalibrasi, validasi observasi, serta pemeriksaan kontinuitas yang dilakukan di luar viewer ini.</p>
+          <p><a href="https://www.hec.usace.army.mil/software/hec-hms/documentation.aspx" target="_blank" rel="noreferrer">Dokumentasi HEC-HMS ↗</a></p>
+        </article>
+      </div>
+    </div>
+
+    <div id="appToast" class="app-toast hidden" role="status" aria-live="polite"><i data-lucide="info"></i><span id="appToastText"></span></div>
+    <div id="basinSourceModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-card source-modal"><div class="modal-head"><div><span class="eyebrow">SUMBER DATA</span><h2>Batas DAS</h2></div><button id="closeBasinSourceModal" class="modal-close" type="button"><i data-lucide="x"></i></button></div><p>Batas DAS mengacu pada <b>Keputusan Menteri Kehutanan Nomor 150 Tahun 2025 tentang Penetapan Batas Daerah Aliran Sungai</b>.</p></div>
+    </div>
+  </section>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+window.FLOOD_CONFIG = {
+  mapAssetsBase: {{ map_assets_public_base|tojson }},
+  mapAssetsVersion: {{ map_assets_version|tojson }}
+};
+</script>
+<script defer src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" fetchpriority="high"></script>
+<script defer src="/static/js/spatial.js?v=2.2.1-r5.1-five-class-flow"></script>
+<script defer src="/static/js/flood-routing.js?v=2.2.1-r5.1-five-class-flow"></script>
+{% endblock %}

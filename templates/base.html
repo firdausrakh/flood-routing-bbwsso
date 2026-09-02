@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#223468">
+  <title>{% block title %}Penelusuran Banjir{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2086%2086%27%3E%3Crect%20width%3D%2786%27%20height%3D%2786%27%20rx%3D%2710%27%20fill%3D%27white%27/%3E%3Cpath%20fill-rule%3D%27evenodd%27%20clip-rule%3D%27evenodd%27%20d%3D%27M0%200.00011675V55.3629C3.54395%2055.3629%2012.4954%2055.4861%2015.457%2055.26C23.524%2054.6427%2030.6284%2050.7759%2035.1469%2045.217C45.075%2033.0049%2040.7623%2015.6992%2025.467%208.49304C21.6204%206.68051%2018.0392%205.99134%2013.0231%205.78658L13.017%200L0%200.00011675ZM47.8102%200.00011675V45.4919C47.8102%2049.1891%2047.6306%2057.5263%2047.8497%2060.6592C48.4102%2068.6684%2056.2071%2075.4831%2066.13%2074.6383C72.9305%2074.0596%2078.2129%2069.9303%2080.3137%2064.4055C81.2237%2060.9852%2081.0335%2059.7575%2081.2686%2057.5415L85.9998%2057.5377V0.00011675H47.8102ZM24.6346%2065.048C14.7606%2065.5609%206.15118%2072.4938%204.76679%2081.3224C4.49725%2082.9749%204.24787%2084.3788%204.24681%2085.9959L0%2085.9997H46.6318C46.584%2084.3208%2046.7487%2083.1064%2046.4757%2081.3657C45.5102%2075.2097%2040.9113%2069.4769%2034.7099%2066.843C31.3586%2065.4199%2027.926%2064.8771%2024.6346%2065.048Z%27%20fill%3D%27%23FCB717%27/%3E%3Cpath%20fill-rule%3D%27evenodd%27%20clip-rule%3D%27evenodd%27%20d%3D%27M13.0173%200.00012207L13.0234%205.7867C18.0394%205.99145%2021.6207%206.68063%2025.4672%208.49316C40.7626%2015.6993%2045.0753%2033.005%2035.1471%2045.2172C30.6286%2050.7761%2023.5243%2054.6428%2015.4572%2055.2601C12.4957%2055.4862%203.5442%2055.363%200.000244141%2055.363V86L4.24705%2085.9962C4.24811%2084.379%204.49749%2082.9751%204.76703%2081.3226C6.61288%2069.5512%2021.3048%2061.1509%2034.7102%2066.8433C40.9116%2069.4772%2045.5105%2075.21%2046.4759%2081.3661C46.7489%2083.1068%2046.5843%2084.3212%2046.6321%2086.0001H86V57.5378L81.2688%2057.5416C81.0337%2059.7576%2081.224%2060.9853%2080.3139%2064.4056C78.2132%2069.9304%2072.9307%2074.0597%2066.1302%2074.6384C56.2074%2075.4832%2048.4104%2068.6685%2047.85%2060.6593C47.6308%2057.5264%2047.8104%2049.1891%2047.8104%2045.492V0.00012207H13.0173Z%27%20fill%3D%27%23223468%27/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>try{if(localStorage.getItem('theme')==='dark')document.documentElement.setAttribute('data-theme','dark')}catch(_){}</script>
+  <script>window.FLOOD_CORE_WARM_PROMISE=fetch('/api/health',{cache:'no-store'}).then(r=>r.ok).catch(()=>false);</script>
+  <script defer src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <link rel="stylesheet" href="/static/css/app.css?v=1.6.4-min10">
+  <link rel="stylesheet" href="/static/css/ui-components.css?v=1.0.0.3-min10">
+  {% block head_extra %}{% endblock %}
+  <link rel="stylesheet" href="/static/css/motion.css?v=1.0.8-native-popup-text">
+  <script src="/static/js/common.js?v=2.0.0-routing-only"></script>
+  <!-- Vercel Speed Insights -->
+  <script>
+    window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
+  </script>
+  <script type="module">
+    import { injectSpeedInsights } from '/static/js/vendor/speed-insights.mjs';
+    injectSpeedInsights();
+  </script>
+  <!-- Vercel Web Analytics -->
+  <script>
+    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+  </script>
+  <script type="module">
+    import { inject } from '/static/js/vendor/analytics.mjs';
+    inject();
+  </script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  {% block content %}{% endblock %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

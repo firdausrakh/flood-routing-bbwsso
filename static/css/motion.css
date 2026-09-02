@@ -1,0 +1,426 @@
+/* ============================================================
+   Global motion system
+   Reusable micro-interactions only: no application state,
+   layout, GIS calculation, or map-layer behavior is changed.
+   ============================================================ */
+:root{
+  --motion-micro:130ms;
+  --motion-hover:180ms;
+  --motion-expand:220ms;
+  --motion-surface:250ms;
+  --motion-ease-out:cubic-bezier(.22,1,.36,1);
+  --motion-ease-standard:cubic-bezier(.2,.8,.2,1);
+  --motion-focus-ring:0 0 0 3px color-mix(in srgb,var(--primary,#223468) 18%,transparent);
+}
+
+/* ---------- Shared interactive feedback ---------- */
+body.spatial-page button,
+body.spatial-page input,
+body.spatial-page select,
+body.spatial-page textarea,
+body.spatial-page summary,
+body.spatial-page .choice-card,
+body.spatial-page .check-card,
+body.spatial-page .basemap-card,
+body.spatial-page .search-result,
+body.spatial-page .point-card,
+body.spatial-page .map-search,
+body.spatial-page .meta-box{
+  transition-timing-function:var(--motion-ease-out);
+}
+
+body button{
+  transition:
+    transform var(--motion-micro) var(--motion-ease-out),
+    background-color var(--motion-hover) var(--motion-ease-out),
+    border-color var(--motion-hover) var(--motion-ease-out),
+    color var(--motion-hover) var(--motion-ease-out),
+    box-shadow var(--motion-hover) var(--motion-ease-out),
+    opacity var(--motion-micro) var(--motion-ease-out),
+    filter var(--motion-hover) var(--motion-ease-out);
+}
+
+body button:disabled,
+body button[aria-disabled="true"]{
+  transform:none!important;
+  filter:none!important;
+  cursor:not-allowed;
+}
+
+body.spatial-page :is(button,input,select,textarea,summary,[tabindex]):focus-visible{
+  outline:2px solid var(--primary,#223468);
+  outline-offset:2px;
+  box-shadow:var(--motion-focus-ring);
+}
+
+body.spatial-page :is(input[type="text"],input[type="search"],input[type="number"],textarea,select){
+  transition:
+    border-color var(--motion-hover) var(--motion-ease-out),
+    background-color var(--motion-hover) var(--motion-ease-out),
+    color var(--motion-hover) var(--motion-ease-out),
+    box-shadow var(--motion-hover) var(--motion-ease-out);
+}
+
+body.spatial-page :is(input[type="text"],input[type="search"],input[type="number"],textarea,select):focus-visible{
+  outline:0;
+}
+
+
+/* One hover language for every application button.
+   Hover never changes a component's semantic color or border; focus-visible remains separate. */
+/* Pointer hover is intentionally disabled on touch-only devices. */
+@media (hover:hover) and (pointer:fine){
+  /*
+     Global button hover: covers static and dynamically generated buttons without moving or scaling them.
+     The darker brightness value is intentional: brightness > 1 is nearly
+     invisible on white controls, which made several sidebar buttons appear
+     to have no hover feedback at all.
+  */
+  body button:not(:disabled):not([aria-disabled="true"]):hover:not(:focus-visible){
+    outline:none!important;
+    filter:brightness(.965)!important;
+    box-shadow:0 3px 9px color-mix(in srgb,var(--text-strong,#182437) 11%,transparent)!important;
+  }
+  body.spatial-page :is(.basemap-card,.choice-card,.check-card,.search-result,.no-basemap-option):hover{
+    transform:translateY(-1px);
+  }
+  body.spatial-page .point-card:not(.point-card-sortable-drag):not(.point-card-sortable-ghost):hover{
+    box-shadow:0 5px 16px color-mix(in srgb,var(--text-strong,#182437) 8%,transparent)!important;
+  }
+}
+
+/* Tap/pressed feedback remains available on mobile for every button. */
+body button:not(:disabled):not([aria-disabled="true"]):active{
+  transform:scale(.98)!important;
+  filter:brightness(.94)!important;
+  box-shadow:0 1px 3px color-mix(in srgb,var(--text-strong,#182437) 9%,transparent)!important;
+  transition-duration:var(--motion-micro)!important;
+}
+body.spatial-page :is(.basemap-card,.choice-card,.check-card,.search-result,.no-basemap-option):active{
+  transform:scale(.985);
+}
+
+/* Never apply transform feedback to MapLibre controls/canvas internals. */
+body.spatial-page .maplibregl-ctrl:not(.map-search) button,
+body.spatial-page .maplibregl-ctrl:not(.map-search) button:hover,
+body.spatial-page .maplibregl-ctrl:not(.map-search) button:active{
+  /* Map controls receive the same visual hover/press feedback, but never move. */
+  transform:none!important;
+}
+body.spatial-page .maplibregl-canvas,
+body.spatial-page .maplibregl-canvas-container,
+body.spatial-page .maplibregl-marker,
+body.spatial-page [class*="maplibregl-user-location"]{
+  transition:none!important;
+  animation:none!important;
+}
+
+/* ---------- Sidebar / header ---------- */
+body.spatial-page .sidebar{
+  width:var(--sidebar-w)!important;
+  opacity:1;
+  transform:translateX(0);
+  will-change:transform,opacity;
+  transition:
+    transform var(--motion-surface) var(--motion-ease-out),
+    opacity var(--motion-surface) var(--motion-ease-out),
+    box-shadow var(--motion-hover) var(--motion-ease-out),
+    visibility 0s linear 0s!important;
+}
+body.spatial-page .sidebar .sidebar-scroll{
+  display:block!important;
+  opacity:1;
+  transition:opacity var(--motion-hover) var(--motion-ease-out);
+}
+body.spatial-page .sidebar.collapsed{
+  width:var(--sidebar-w)!important;
+  opacity:0!important;
+  transform:translateX(calc(-100% - 22px))!important;
+  visibility:hidden!important;
+  pointer-events:none!important;
+  transition:
+    transform var(--motion-surface) var(--motion-ease-out),
+    opacity var(--motion-surface) var(--motion-ease-out),
+    visibility 0s linear var(--motion-surface)!important;
+}
+body.spatial-page .sidebar.collapsed .sidebar-scroll{
+  display:block!important;
+  opacity:0;
+}
+
+body.spatial-page .app-header{
+  opacity:1;
+  will-change:transform,opacity;
+  transition:
+    transform var(--motion-surface) var(--motion-ease-out),
+    opacity var(--motion-surface) var(--motion-ease-out),
+    box-shadow var(--motion-hover) var(--motion-ease-out)!important;
+}
+body.spatial-page .app-header.is-hidden{
+  opacity:0;
+  transform:translateY(calc(-100% - 6px));
+  pointer-events:none;
+}
+body.spatial-page .header-menu-handle svg,
+body.spatial-page .point-chevron svg,
+body.spatial-page .technical-analysis>summary>svg{
+  transition:transform var(--motion-hover) var(--motion-ease-out)!important;
+}
+
+/* ---------- Panels, menus, popovers, search results ---------- */
+body.spatial-page :is(.map-panel,.dta-colorpicker-panel,.map-search-results){
+  opacity:1;
+  transform:translateY(0) scale(1);
+  transform-origin:top right;
+  will-change:transform,opacity;
+  transition:
+    opacity var(--motion-hover) var(--motion-ease-out),
+    transform var(--motion-hover) var(--motion-ease-out),
+    display var(--motion-hover) allow-discrete!important;
+}
+body.spatial-page :is(.map-panel,.dta-colorpicker-panel,.map-search-results).hidden{
+  opacity:0;
+  pointer-events:none;
+  transform:translateY(-4px) scale(.985);
+  display:none!important;
+}
+body.spatial-page .measure-panel{transform-origin:bottom left}
+body.spatial-page .map-search-results{transform-origin:top center}
+
+@starting-style{
+  body.spatial-page :is(.map-panel,.dta-colorpicker-panel,.map-search-results):not(.hidden){
+    opacity:0;
+    transform:translateY(-4px) scale(.985);
+  }
+}
+
+/* MapLibre already positions the popup wrapper with transforms.  Never animate
+   the content itself with translate/scale: on fractional screen coordinates that
+   promotes the text to a composited bitmap and makes small Jakarta Sans text look
+   visibly soft.  Opacity-only keeps the micro-interaction without raster blur. */
+body.spatial-page .maplibregl-popup-content{
+  animation:motion-popover-in var(--motion-hover) var(--motion-ease-out) both;
+  transform:none!important;
+  will-change:auto!important;
+  filter:none!important;
+  backface-visibility:visible!important;
+}
+@keyframes motion-popover-in{
+  from{opacity:0}
+  to{opacity:1}
+}
+
+/* ---------- Tooltips ---------- */
+body.spatial-page .app-info-tooltip,
+body.spatial-page .field-help-tooltip{
+  transform:translateY(-4px) scale(.985);
+  transform-origin:center bottom;
+  transition:
+    opacity var(--motion-hover) var(--motion-ease-out),
+    transform var(--motion-hover) var(--motion-ease-out),
+    visibility 0s linear var(--motion-hover)!important;
+}
+body.spatial-page :is(.app-info-tooltip,.field-help-tooltip).visible{
+  transform:translateY(0) scale(1);
+  transition-delay:0s;
+}
+body.spatial-page .app-info-tooltip.below{transform-origin:center top}
+
+/* ---------- Native details / accordion motion ---------- */
+body.spatial-page details>summary{
+  transition:
+    background-color var(--motion-hover) var(--motion-ease-out),
+    color var(--motion-hover) var(--motion-ease-out),
+    border-color var(--motion-hover) var(--motion-ease-out);
+}
+body.spatial-page details[open]>.point-body,
+body.spatial-page details[open]>.technical-analysis-body,
+body.spatial-page details[open]>.settings-field{
+  animation:motion-details-in var(--motion-expand) var(--motion-ease-out) both;
+}
+@keyframes motion-details-in{
+  from{opacity:0;transform:translateY(-4px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+/* Modern browsers can animate both opening and closing without JS/state changes. */
+@supports (interpolate-size:allow-keywords){
+  :root{interpolate-size:allow-keywords}
+  body.spatial-page details::details-content{
+    block-size:0;
+    opacity:0;
+    overflow:hidden;
+    transition:
+      block-size var(--motion-expand) var(--motion-ease-out),
+      opacity var(--motion-expand) var(--motion-ease-out),
+      content-visibility var(--motion-expand) allow-discrete;
+  }
+  body.spatial-page details[open]::details-content{
+    block-size:auto;
+    opacity:1;
+  }
+  /* Keep author styles from short-circuiting the details-content transition. */
+  body.spatial-page .advanced:not([open])>.settings-field{display:grid!important}
+  body.spatial-page details[open]>.point-body,
+  body.spatial-page details[open]>.technical-analysis-body,
+  body.spatial-page details[open]>.settings-field{animation:none}
+}
+
+/* ---------- Cards and click surfaces ---------- */
+body.spatial-page .point-card{
+  transition:
+    border-color var(--motion-hover) var(--motion-ease-out),
+    box-shadow var(--motion-hover) var(--motion-ease-out),
+    background-color var(--motion-hover) var(--motion-ease-out)!important;
+}
+body.spatial-page .point-card>summary{
+  transition:background-color var(--motion-hover) var(--motion-ease-out)!important;
+}
+body.spatial-page :is(.basemap-card,.choice-card,.check-card,.search-result,.no-basemap-option,.morphometry-analysis-button){
+  transition:
+    transform var(--motion-micro) var(--motion-ease-out),
+    background-color var(--motion-hover) var(--motion-ease-out),
+    border-color var(--motion-hover) var(--motion-ease-out),
+    color var(--motion-hover) var(--motion-ease-out),
+    box-shadow var(--motion-hover) var(--motion-ease-out)!important;
+}
+
+/* SortableJS owns transforms while reordering; motion must not compete with it. */
+body.spatial-page :is(.point-card-sortable-ready,.point-card-sortable-ghost,.point-card-sortable-drag,.point-card-reordering,.point-card-dragging,.point-card-drag-fallback){
+  transition:none!important;
+  animation:none!important;
+}
+
+/* ---------- Modals / dialogs ---------- */
+body.spatial-page .modal-backdrop{
+  opacity:1;
+  transition:
+    opacity var(--motion-surface) var(--motion-ease-out),
+    display var(--motion-surface) allow-discrete!important;
+}
+body.spatial-page .modal-backdrop>.modal-card{
+  opacity:1;
+  transform:translateY(0) scale(1);
+  transform-origin:center;
+  will-change:transform,opacity;
+  transition:
+    opacity var(--motion-surface) var(--motion-ease-out),
+    transform var(--motion-surface) var(--motion-ease-out)!important;
+}
+body.spatial-page .modal-backdrop.hidden{
+  opacity:0;
+  pointer-events:none;
+  display:none!important;
+}
+body.spatial-page .modal-backdrop.hidden>.modal-card{
+  opacity:0;
+  transform:translateY(5px) scale(.985);
+}
+@starting-style{
+  body.spatial-page .modal-backdrop:not(.hidden){opacity:0}
+  body.spatial-page .modal-backdrop:not(.hidden)>.modal-card{
+    opacity:0;
+    transform:translateY(5px) scale(.985);
+  }
+}
+
+/* ---------- Toasts / status notifications ---------- */
+body.spatial-page .undo-toast,
+body.spatial-page .app-toast{
+  opacity:1;
+  animation:none!important;
+  will-change:transform,opacity;
+  transition:
+    opacity var(--motion-hover) var(--motion-ease-out),
+    transform var(--motion-hover) var(--motion-ease-out),
+    display var(--motion-hover) allow-discrete!important;
+}
+body.spatial-page .undo-toast{transform:translate(-50%,0)}
+body.spatial-page .app-toast{transform:translate(-50%,0)}
+body.spatial-page .undo-toast.hidden,
+body.spatial-page .app-toast.hidden{
+  opacity:0;
+  pointer-events:none;
+  transform:translate(-50%,7px);
+  display:none!important;
+}
+@starting-style{
+  body.spatial-page .undo-toast:not(.hidden),
+  body.spatial-page .app-toast:not(.hidden){
+    opacity:0;
+    transform:translate(-50%,7px);
+  }
+}
+body.spatial-page .status{
+  transition:
+    color var(--motion-hover) var(--motion-ease-out),
+    background-color var(--motion-hover) var(--motion-ease-out),
+    border-color var(--motion-hover) var(--motion-ease-out),
+    opacity var(--motion-hover) var(--motion-ease-out);
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion:reduce){
+  :root{
+    --motion-micro:1ms;
+    --motion-hover:1ms;
+    --motion-expand:1ms;
+    --motion-surface:1ms;
+  }
+  html{scroll-behavior:auto!important}
+  body.spatial-page *,
+  body.spatial-page *::before,
+  body.spatial-page *::after{
+    animation-duration:1ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:1ms!important;
+    transition-delay:0ms!important;
+  }
+  body.spatial-page :is(button,.basemap-card,.choice-card,.check-card,.search-result,.modal-card,.map-panel,.dta-colorpicker-panel,.map-search-results,.app-info-tooltip,.field-help-tooltip):not(.maplibregl-popup-content){
+    transform:none!important;
+  }
+  body.spatial-page .sidebar.collapsed{transform:translateX(calc(-100% - 22px))!important}
+  body.spatial-page .app-header.is-hidden{transform:translateY(calc(-100% - 6px))!important}
+  body.spatial-page .undo-toast,
+  body.spatial-page .app-toast{transform:translate(-50%,0)!important}
+}
+
+
+/* Sidebar reference actions are transparent at rest, so brightness alone has
+   almost no visible surface. Give them the same clear neutral hover feedback
+   as other application buttons without moving/scaling the control. */
+@media (hover:hover) and (pointer:fine){
+  body.spatial-page .sidebar-info-links .definition-link:not(:disabled):hover:not(:focus-visible){
+    background:color-mix(in srgb,var(--primary) 6%,var(--card-bg))!important;
+    border-color:color-mix(in srgb,var(--primary) 20%,var(--border-color))!important;
+    filter:none!important;
+    box-shadow:0 3px 9px color-mix(in srgb,var(--text-strong,#182437) 11%,transparent)!important;
+  }
+}
+
+/* Keep the custom search submit visually stable inside MapLibre's .maplibregl-ctrl.
+   MapLibre ships its own control-button hover background, so this selector must
+   win explicitly. The search action remains navy; only brightness/shadow provide
+   the shared hover feedback. */
+body.spatial-page .map-search.maplibregl-ctrl .search-submit{
+  background:#223468!important;
+  border-color:#223468!important;
+  color:#fff!important;
+}
+body.spatial-page .map-search.maplibregl-ctrl .search-submit svg{
+  color:#fff!important;
+  stroke:currentColor!important;
+}
+@media (hover:hover) and (pointer:fine){
+  body.spatial-page .map-search.maplibregl-ctrl .search-submit:not(:disabled):hover:not(:focus-visible){
+    background:#223468!important;
+    border-color:#223468!important;
+    color:#fff!important;
+    filter:brightness(.965)!important;
+  }
+}
+body.spatial-page .map-search.maplibregl-ctrl .search-submit:not(:disabled):active{
+  background:#223468!important;
+  border-color:#223468!important;
+  color:#fff!important;
+}
