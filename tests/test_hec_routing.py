@@ -525,9 +525,13 @@ def test_v221_folder_rename_safe_launchers_and_r2_contract():
     assert "activate.bat" not in pre_bat.lower()
     assert "R2_RUNTIME_BUCKET=flood-routing" in env_example
     assert "R2_REFERENCE_BUCKET=dta-map-assets" in env_example
+    assert "R2_DOWNLOAD_WORKERS=4" in env_example
+    assert "R2_HMS_MANIFEST_KEY=" in env_example and "R2_REFRESH_CACHE=0" in env_example
     assert "ensure_hms_object" in backend and "R2_HMS_PREFIX" in backend
+    assert "tcp_keepalive=True" in backend and "_object_lock" in backend
     assert 'R2_REFERENCE_BUCKET", "dta-map-assets"' in reference
     assert "official_basins.geojson" in reference and "official_rivers.geojson" in reference
+    assert "_download_many" in reference
     assert 'call "%ROOT%preprocess_hms.bat"' not in r2_bat
     assert r"scripts\upload_hms_r2.py" in r2_bat
     assert r"data\hms\index.json" in r2_bat
@@ -580,8 +584,8 @@ def test_hydrograph_xlsx_uses_one_sheet_per_control_point_and_en_dash_filename()
     payload = {
         "interval": "5Minute",
         "points": [
-            {"point_id": "A", "label": "Kali Progo – Kranggan", "series": [1, 2, 3]},
-            {"point_id": "B", "label": "Kali Progo – Srumbung", "series": [4, 5, 6]},
+            {"point_id": "A", "label": "Kali Progo – Kranggan", "snapped_lat": -7.339961, "snapped_lon": 110.209919, "series": [1, 2, 3]},
+            {"point_id": "B", "label": "Kali Progo – Srumbung", "snapped_lat": -7.1, "snapped_lon": 110.1, "series": [4, 5, 6]},
         ],
     }
     blob = build_hydrograph_xlsx(
@@ -596,10 +600,14 @@ def test_hydrograph_xlsx_uses_one_sheet_per_control_point_and_en_dash_filename()
         sheet2 = archive.read("xl/worksheets/sheet2.xml").decode("utf-8")
         assert 'name="Kranggan"' in workbook
         assert 'name="Srumbung"' in workbook
-        assert "Debit Banjir Kala Ulang 25 Tahun (m³/det)" in sheet1
+        assert "Debit Banjir Kala Ulang 25 Tahun Kali Progo – Kranggan" in sheet1
         assert "Kali Progo – Kranggan" in sheet1
         assert "Kali Progo – Srumbung" in sheet2
-        assert "0:00" in sheet1 and "0:05" in sheet1 and "0:10" in sheet1
+        assert "-7.339961, 110.209919" in sheet1
+        assert '<c r="A2" s="4"><v>0.0</v></c>' in sheet1
+        assert '<c r="A3" s="4"><v>0.003472222222222222</v></c>' in sheet1
+        assert "mergeCells" not in sheet1
+        assert 'numFmtId="20"' in archive.read("xl/styles.xml").decode("utf-8")
     assert hydrograph_filename(
         ["Kali Progo – Kranggan", "Kali Progo – Srumbung"],
         return_period_years=25,

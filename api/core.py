@@ -37,6 +37,7 @@ from api.services.hec_routing import (
     selected_reach_series,
     snap_points as hec_snap_points,
     routing_flow_side as hec_routing_flow_side,
+    prewarm_display_objects as hec_prewarm_display_objects,
 )
 from api.services.hydrograph_export import (
     build_hydrograph_xlsx,
@@ -57,7 +58,7 @@ TEMPLATES_DIR = ROOT_DIR / "templates"
 
 CRS_WEB = "EPSG:4326"
 CRS_AREA = "ESRI:54034"
-APP_VERSION = "2.2.1-r2-popup-hover"
+APP_VERSION = "1.0.1.0"
 DEFAULT_RIVER_SEARCH_RADIUS_M = 300.0
 TOPONYM_NAMING_RADIUS_M = 5_000.0
 TOPONYM_SETTLEMENT_PRIORITY = {
@@ -88,6 +89,10 @@ class HecObservationRequest(BaseModel):
     points: list[HecObservationPoint] = Field(default_factory=list, max_length=10)
     scenario: str | None = None
     snap_radius_m: float = Field(DEFAULT_RIVER_SEARCH_RADIUS_M, gt=0, le=20_000)
+    # The add-point interaction needs both the routing snap and its display
+    # identity.  Keeping this opt-in avoids changing the response used by
+    # callers that only need routing geometry.
+    include_identity: bool = False
 
 
 # Reference layers are used only for cartography and automatic naming.
@@ -484,6 +489,32 @@ def info():
     }
 
 
+def _location_identity(
+    *,
+    lon: float,
+    lat: float,
+    snap_radius_m: float,
+    model_id: str | None = None,
+    element_id: str | None = None,
+    snapped_lon: float | None = None,
+    snapped_lat: float | None = None,
+) -> dict[str, Any]:
+    """Display/name context; identity follows snap, name preserves clicked bank."""
+    ref_lon = float(snapped_lon) if snapped_lon is not None else lon
+    ref_lat = float(snapped_lat) if snapped_lat is not None else lat
+    x, y = to_reference.transform(ref_lon, ref_lat)
+    pt = Point(x, y)
+    return {
+        "official_basin": official_basin_at_point(pt),
+        "official_river": nearest_official_river(pt, max_distance_m=snap_radius_m),
+        "toponym": nearest_settlement_toponym(
+            lon, lat, model_id=model_id, element_id=element_id,
+            snapped_lon=snapped_lon, snapped_lat=snapped_lat,
+        ),
+        "reference_layers_display_only": True,
+    }
+
+
 @app.get("/api/location-check")
 def location_check(
     lon: float = Query(..., ge=-180, le=180),
@@ -494,20 +525,11 @@ def location_check(
     snapped_lon: float | None = Query(default=None, ge=-180, le=180),
     snapped_lat: float | None = Query(default=None, ge=-90, le=90),
 ):
-    """Display/name context; identity follows snap, name preserves clicked bank."""
-    ref_lon = float(snapped_lon) if snapped_lon is not None else float(lon)
-    ref_lat = float(snapped_lat) if snapped_lat is not None else float(lat)
-    x, y = to_reference.transform(ref_lon, ref_lat)
-    pt = Point(x, y)
-    return {
-        "official_basin": official_basin_at_point(pt),
-        "official_river": nearest_official_river(pt, max_distance_m=float(snap_radius_m)),
-        "toponym": nearest_settlement_toponym(
-            lon, lat, model_id=model_id, element_id=element_id,
-            snapped_lon=snapped_lon, snapped_lat=snapped_lat,
-        ),
-        "reference_layers_display_only": True,
-    }
+    return _location_identity(
+        lon=float(lon), lat=float(lat), snap_radius_m=float(snap_radius_m),
+        model_id=model_id, element_id=element_id,
+        snapped_lon=snapped_lon, snapped_lat=snapped_lat,
+    )
 
 
 @app.get("/api/map-assets/{asset_key}")
@@ -580,9 +602,14 @@ def hec_routing_reaches(scenario: str | None = Query(default=None)):
 
 @app.get("/api/hec-routing/modeled-rivers")
 def hec_routing_modeled_rivers(
+    response: Response,
     scenario: str | None = Query(default=None),
     tier: str | None = Query(default=None),
 ):
+    # Display tiers are immutable precomputed geometry.  Let the browser and
+    # Vercel edge retain each tier instead of invoking the R2-backed runtime on
+    # every zoom threshold crossing.
+    response.headers["Cache-Control"] = "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800"
     return hec_modeled_rivers_geojson(scenario, tier)
 
 
@@ -604,7 +631,33 @@ def hec_routing_series(reach_ids: str | None = Query(default=None), scenario: st
 
 @app.post("/api/hec-routing/snap")
 def hec_routing_snap(payload: HecObservationRequest):
-    return hec_snap_points([item.model_dump() for item in payload.points], radius_m=payload.snap_radius_m, scenario_id=payload.scenario)
+    result = hec_snap_points(
+        [item.model_dump() for item in payload.points],
+        radius_m=payload.snap_radius_m,
+        scenario_id=payload.scenario,
+    )
+    if not payload.include_identity:
+        return result
+
+    # A separate /api/location-check round trip was previously made after every
+    # successful snap.  On Vercel that extra cross-region request is noticeable
+    # even after the worker is warm.  Enrich the already-computed snap response
+    # in the same request instead.
+    requested_by_id = {str(item.point_id): item for item in payload.points if item.point_id}
+    for item in result.get("points", []):
+        requested = requested_by_id.get(str(item.get("point_id")))
+        if requested is None:
+            continue
+        item["identity"] = _location_identity(
+            lon=float(requested.lon),
+            lat=float(requested.lat),
+            snap_radius_m=float(payload.snap_radius_m),
+            model_id=str(item.get("model_id") or "") or None,
+            element_id=str(item.get("element_id") or "") or None,
+            snapped_lon=float(item["snapped_lon"]),
+            snapped_lat=float(item["snapped_lat"]),
+        )
+    return result
 
 
 @app.post("/api/hec-routing/export-hydrograph.xlsx")
@@ -656,6 +709,10 @@ def hec_routing_observe(payload: HecObservationRequest):
 
 @app.get("/api/health")
 def health():
+    # The shell starts this request in the background.  On R2 deployments,
+    # overlap display/topology downloads now so opening the routing controls or
+    # placing the first point does not serialize those transfers.
+    hec_prewarm_display_objects()
     return {
         "status": "ok",
         "mode": "routing_only",

@@ -6563,3 +6563,7 @@ html:-webkit-full-screen .maplibregl-ctrl-top-left .map-search{
   -webkit-font-smoothing:auto!important;
   text-rendering:auto!important;
 }
+
+
+/* Metodologi: alur model dibuat mudah dipindai oleh pengguna pemula. */
+.methodology-modal pre{margin:10px 0 14px;padding:14px 16px;background:#f4f7fa;border-radius:5px;overflow:auto;white-space:pre-wrap}.methodology-modal pre code{font:inherit;color:#17283f}

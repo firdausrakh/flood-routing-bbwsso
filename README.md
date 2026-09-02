@@ -1,9 +1,24 @@
-# Penelusuran Banjir — Versi 1.0.0.0
+# Penelusuran Banjir — Versi 1.0.1.0
 
 WebGIS untuk membaca dan menelusuri hasil simulasi banjir HEC-HMS pada jaringan sungai. Aplikasi membantu pengguna melihat hidrograf, debit puncak, waktu puncak, hubungan hulu–hilir, serta perubahan aliran pada beberapa skenario model.
 
 Aplikasi ini merupakan **viewer hasil model**, bukan mesin simulasi hidrologi yang menghitung ulang hujan-limpasan atau routing di browser. Data HEC-HMS diproses terlebih dahulu menjadi data ringan yang siap dibaca oleh web.
 
+## Riwayat versi
+
+### 1.0.1.0 — Pembaruan metodologi dan dokumentasi
+
+- Modal **Metodologi & Sumber Data** disusun ulang dengan alur pemodelan yang lebih mudah dipahami oleh pengguna hidrologi pemula.
+- Metodologi menjelaskan tahapan hujan, kehilangan hujan, hujan efektif, transformasi limpasan, aliran dasar, routing, dan outlet.
+- Sumber data dipisahkan menjadi Basin Model `.basin`, database spasial `.sqlite`, hasil HEC-DSS `.dss`, data runtime *precomputed*, dan data referensi peta.
+- Ditambahkan penjelasan kontrak `FLOW` sebagai outflow dan `FLOW-COMBINE` sebagai inflow Reach.
+- README dirapikan menjadi dokumentasi utama rilis dan dokumentasi non-audit digabungkan ke dalamnya.
+- `.gitignore` diperbarui untuk mengecualikan data lokal, `.cache`, `.venv`, dan dokumen audit.
+
+### 1.0.0.0 — Rilis awal
+
+- Rilis awal WebGIS Penelusuran Banjir berbasis hasil precompute HEC-HMS.
+- Menyediakan peta jaringan sungai, Titik Kontrol, hidrograf, penelusuran upstream, skenario banjir, backend lokal, dan backend Cloudflare R2.
 ## Fitur utama
 
 - Memilih DAS dan skenario model.
@@ -312,4 +327,4 @@ Periksa lisensi setiap data spasial, library, dan sumber model sebelum distribus
 
 ---
 
-**Rilis:** `1.0.0.0`
+**Rilis:** `1.0.1.0`

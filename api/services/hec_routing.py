@@ -16,11 +16,13 @@ Subbasin centerlines use the Subbasin FLOW/outflow series.
 from __future__ import annotations
 
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 import gzip
 import json
 import math
+import os
 
 import geopandas as gpd
 from shapely.geometry import Point, shape
@@ -90,6 +92,34 @@ def registry() -> dict[str, Any]:
 
 def _models() -> list[dict[str, Any]]:
     return [x for x in registry().get("models", []) if isinstance(x, dict) and x.get("id")]
+
+
+def prewarm_display_objects() -> None:
+    """Materialize only the small GeoJSON/topology needed by the map and snap.
+
+    This runs behind the existing background health warm-up.  It deliberately
+    excludes scenario flow files, which can be much larger and are only needed
+    after a user actually adds a control point.
+    """
+    if hms_backend_name() != "r2":
+        return
+    refs: set[Path] = set()
+    for model in _models():
+        root = _model_dir(model)
+        for key, fallback in (
+            ("routing_lines", str(model.get("reaches") or "reaches.geojson")),
+            ("modeled_area", "modeled_area.geojson"),
+            ("model_rivers", "model_rivers.geojson"),
+            ("topology", "topology.json"),
+        ):
+            refs.add((root / str(model.get(key) or fallback)).relative_to(HMS_DIR))
+    if not refs:
+        return
+    workers = max(1, min(int(os.getenv("R2_DOWNLOAD_WORKERS", "4")), len(refs)))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hms-display") as pool:
+        pending = [pool.submit(ensure_hms_object, ref) for ref in refs]
+        for future in as_completed(pending):
+            future.result()
 
 
 def _model(model_id: str) -> dict[str, Any] | None:
@@ -753,4 +783,3 @@ def observe_points(point_specs: list[dict[str, Any]], radius_m: float = DEFAULT_
         "routing_selection": routing_selection,
         "point_count": len(points), "source": "precomputed_hms",
     }
-

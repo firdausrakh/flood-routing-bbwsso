@@ -24,6 +24,9 @@
   let floodOfficialRiversTemporarilyHidden = false;
   let modeledRiverScenario = '';
   let riverAssetKey = '';
+  let riverAssetPendingKey = '';
+  let riverLoadSerial = 0;
+  const riverAssetCache = new Map();
   let homeBounds = null;
   let measureActive = false;
   let measurePoints = [];
@@ -133,19 +136,33 @@
   }
 
   function addReferenceLayers() {
-    if (!map.getSource('official-basins')) map.addSource('official-basins', { type: 'geojson', data: assetUrl('official-basins') });
+    // Basin boundaries are display-only. A modest GeoJSON tiling tolerance
+    // keeps pan/zoom responsive while preserving the boundary at WebGIS scale.
+    if (!map.getSource('official-basins')) map.addSource('official-basins', {
+      type: 'geojson', data: assetUrl('official-basins'), tolerance: 1.2, buffer: 64, maxzoom: 10,
+    });
     if (!map.getLayer('official-basin-fill')) map.addLayer({ id: 'official-basin-fill', type: 'fill', source: 'official-basins', paint: { 'fill-color': '#9b7300', 'fill-opacity': 0.015 } });
     if (!map.getLayer('official-basin-line')) map.addLayer({ id: 'official-basin-line', type: 'line', source: 'official-basins', paint: { 'line-color': '#9b7300', 'line-width': 2, 'line-opacity': 0.9 } });
 
-    if (!map.getSource('official-basin-labels')) map.addSource('official-basin-labels', { type: 'geojson', data: '/api/basin-labels' });
+    if (!map.getSource('official-basin-labels')) map.addSource('official-basin-labels', {
+      type: 'geojson', data: '/api/basin-labels', tolerance: 0.5, buffer: 32, maxzoom: 10,
+    });
     if (!map.getLayer('official-basin-label')) map.addLayer({
       id: 'official-basin-label', type: 'symbol', source: 'official-basin-labels', minzoom: 6,
       layout: { 'text-field': ['concat', 'DAS ', ['get', 'basin_name']], 'text-size': ['interpolate', ['linear'], ['zoom'], 6, 10, 11, 13], 'text-letter-spacing': 0.05, 'text-allow-overlap': false },
       paint: { 'text-color': '#7a5c00', 'text-halo-color': 'rgba(255,255,255,.9)', 'text-halo-width': 1.5 },
     });
 
-    riverAssetKey = $('autoRiverZoom')?.checked === false ? 'full' : riverAssetForZoom();
-    if (!map.getSource('official-rivers')) map.addSource('official-rivers', { type: 'geojson', data: modeledRiverUrl(riverAssetKey) });
+    // Do not hand a URL directly to MapLibre here.  It would re-request and
+    // re-parse a large GeoJSON each time a user crosses a zoom threshold.
+    // Tier payloads are kept in memory and only the selected one is applied.
+    if (!map.getSource('official-rivers')) map.addSource('official-rivers', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+      tolerance: 0.8,
+      buffer: 64,
+      maxzoom: 12,
+    });
     const riverPaint = { 'line-color': '#0083d7', 'line-opacity': 0.88, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 10, 1.5, 14, 2.6] };
     if (!map.getLayer('official-river-1')) map.addLayer({ id: 'official-river-1', type: 'line', source: 'official-rivers', filter: ['==', ['to-string', ['get', 'river_order']], '1'], paint: riverPaint });
     if (!map.getLayer('official-river-2')) map.addLayer({ id: 'official-river-2', type: 'line', source: 'official-rivers', filter: ['==', ['to-string', ['get', 'river_order']], '2'], paint: riverPaint });
@@ -166,17 +183,59 @@
 
     try { map.moveLayer('official-basin-label'); } catch (_) {}
     applyLayerControls();
+    updateRiverAsset(true);
+  }
+
+  function riverCacheKey(tier) {
+    return `${modeledRiverScenario || '__default__'}:${tier}`;
+  }
+
+  function fetchRiverAsset(tier) {
+    const key = riverCacheKey(tier);
+    let task = riverAssetCache.get(key);
+    if (!task) {
+      task = fetch(modeledRiverUrl(tier), { cache: 'force-cache' })
+        .then(response => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .catch(error => { riverAssetCache.delete(key); throw error; });
+      riverAssetCache.set(key, task);
+    }
+    return task;
+  }
+
+  function prefetchRiverTiers(currentTier) {
+    if ($('autoRiverZoom')?.checked === false) return;
+    const tiers = ['z6-8', 'z8-10', 'z10-11', 'z11-12', 'z12-14', 'full'];
+    const index = tiers.indexOf(currentTier);
+    for (const tier of [tiers[index - 1], tiers[index + 1]]) {
+      if (tier) fetchRiverAsset(tier).catch(() => {});
+    }
   }
 
   function updateRiverAsset(force = false) {
     const next = $('autoRiverZoom')?.checked === false ? 'full' : riverAssetForZoom();
-    if (!force && next === riverAssetKey) return;
-    riverAssetKey = next;
-    map.getSource('official-rivers')?.setData?.(modeledRiverUrl(next));
+    if (!force && (next === riverAssetKey || next === riverAssetPendingKey)) return;
+    const serial = ++riverLoadSerial;
+    riverAssetPendingKey = next;
+    fetchRiverAsset(next).then(data => {
+      if (serial !== riverLoadSerial) return;
+      map.getSource('official-rivers')?.setData?.(data);
+      riverAssetKey = next;
+      riverAssetPendingKey = '';
+      // Preload only adjacent tiers. It makes common zoom-in/out interactions
+      // immediate without downloading the whole hierarchy at once.
+      const schedule = window.requestIdleCallback || (callback => setTimeout(callback, 180));
+      schedule(() => prefetchRiverTiers(next));
+    }).catch(() => {
+      if (serial === riverLoadSerial) riverAssetPendingKey = '';
+    });
   }
 
   window.setFloodModeledRiverScenario = scenario => {
     modeledRiverScenario = String(scenario || '').trim();
+    riverAssetCache.clear();
     updateRiverAsset(true);
   };
 

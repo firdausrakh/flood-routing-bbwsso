@@ -4,7 +4,7 @@
 {% block head_extra %}
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" />
 {% if map_assets_public_base %}<link rel="preconnect" href="{{ map_assets_public_base }}" crossorigin>{% endif %}
-<link rel="stylesheet" href="/static/css/spatial.css?v=2.2.1-r5.1-five-class-flow" />
+<link rel="stylesheet" href="/static/css/spatial.css?v=1.0.1.0" />
 {% endblock %}
 {% block content %}
 <main id="spatialWorkspace" class="webgis-shell">
@@ -208,7 +208,7 @@
       <div class="modal-card warning-modal"><div class="warning-icon"><i data-lucide="triangle-alert"></i></div><h2 id="modelUnavailableTitle">Data Pemodelan Banjir Kala Ulang Belum Tersedia</h2><p>Penelusuran Banjir Tidak Dapat Diproses</p><button id="acceptModelUnavailable" class="btn btn-primary" type="button">Mengerti</button></div>
     </div>
     <div id="usageNoticeModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="usageNoticeTitle">
-      <div class="modal-card warning-modal usage-notice-modal"><div class="warning-icon neutral-icon"><i data-lucide="info"></i></div><span class="eyebrow">PEMBERITAHUAN PENGGUNAAN</span><h2 id="usageNoticeTitle">Hasil Penelusuran Bersifat Model</h2><p>Informasi pada peta dan grafik adalah hasil perkiraan dari model banjir. Hasil ini membantu melihat pola aliran, perubahan debit, dan perkiraan waktu datangnya puncak banjir di sepanjang sungai. Gunakan hasilnya sebagai bahan pertimbangan, bukan sebagai satu-satunya dasar keputusan.</p><button id="acceptUsageNotice" class="btn btn-primary" type="button">Mengerti</button></div>
+      <div class="modal-card warning-modal usage-notice-modal"><div class="warning-icon neutral-icon"><i data-lucide="info"></i></div><span class="eyebrow">PEMBERITAHUAN PENGGUNAAN</span><h2 id="usageNoticeTitle">Hasil Penelusuran Banjir Berbasis Model</h2><p>Informasi pada peta dan grafik merupakan hasil estimasi dari pemodelan banjir. Data ini menggambarkan perkiraan pola aliran, dinamika debit, dan waktu puncak banjir sepanjang sungai. Gunakan informasi ini sebagai referensi pendukung, bukan sebagai satu-satunya dasar pengambilan keputusan.</p><button id="acceptUsageNotice" class="btn btn-primary" type="button">Mengerti</button></div>
     </div>
 
     <div id="definitionModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
@@ -293,54 +293,67 @@
       <div class="modal-card definition-modal methodology-modal">
         <div class="modal-head"><div><span class="eyebrow">INFORMASI TEKNIS</span><h2>Metodologi & Sumber Data</h2></div><button id="closeMethodologyModal" class="modal-close" type="button" aria-label="Tutup"><i data-lucide="x"></i></button></div>
         <article>
-          <h3>Posisi aplikasi</h3>
-          <p>Aplikasi ini adalah <b>WebGIS inspeksi hidrograf dan jaringan routing hasil HEC-HMS</b>. Browser menampilkan hasil simulasi yang telah diproses sebelumnya; browser tidak menghitung hujan-limpasan, routing, muka air, kedalaman, atau luas genangan secara live.</p>
-          <div class="app-definition-note"><b>Interpretasi penting:</b> hasil yang terlihat adalah keluaran model. Gunakan bersama verifikasi lapangan, data operasi terbaru, dan penilaian hidrologi/hidraulik yang sesuai.</div>
-        </article>
-        <article>
-          <h3>Rantai pemodelan</h3>
-          <p>Secara konseptual, model HEC-HMS membentuk limpasan dari hujan pada sub-DAS, menggabungkannya di jaringan, lalu menelusurkan debit pada reach menuju outlet.</p>
-          <ol>
-            <li><b>Loss:</b> kehilangan hujan dikonfigurasi di Basin Model, termasuk metode seperti SCS Curve Number.</li>
-            <li><b>Transform:</b> hujan efektif diubah menjadi limpasan langsung menggunakan metode transform yang tersimpan pada model.</li>
-            <li><b>Baseflow:</b> kontribusi aliran dasar mengikuti konfigurasi baseflow model, bila tersedia.</li>
-            <li><b>Routing:</b> hidrograf dirambatkan dari hulu ke hilir mengikuti metode routing dan parameter setiap reach.</li>
-          </ol>
-          <p>Jenis metode dan parameter adalah bagian dari model HEC-HMS masing-masing, bukan asumsi baru yang dihitung oleh aplikasi web.</p>
-        </article>
-        <article>
-          <h3>Representasi jaringan dan pembacaan debit</h3>
-          <p>Centerline <code>reach2d</code> dan poligon <code>subbasin2d</code> dibaca dari SQLite. Atribut <code>name</code> dicocokkan dengan ID elemen pada <code>.basin</code>, lalu topologi upstream–downstream dipakai untuk menelusuri jaringan.</p>
-          <p>Seri waktu <code>Q(t)</code> dibaca dari hasil HEC-DSS yang sudah diprecompute. Titik di dalam reach menggunakan seri endpoint sebagai <i>proxy</i> sesuai aturan posisi titik; ini bukan interpolasi hidraulik sepanjang reach.</p>
-        </article>
-        <article>
-          <h3>Makna skenario dan metrik</h3>
-          <p>Pilihan 2, 10, dan 25 tahun adalah <b>label skenario pada keluaran model</b>. Tampilan ini tidak menjadi bukti tersendiri tentang periode data, distribusi frekuensi, AEP, atau ketidakpastian.</p>
-          <p>“Selisih waktu puncak” adalah perbedaan waktu puncak dua hidrograf pada resolusi data 5 menit—bukan travel time partikel atau waktu tempuh hidraulik. Aplikasi juga tidak menampilkan inundasi, kedalaman, kecepatan, atau batas genangan.</p>
-        </article>
-        <article>
-          <h3>Hierarki sumber data</h3>
+          <h3>Metodologi pemodelan</h3>
+          <p>Model sumber menggunakan HEC-HMS. Secara umum alurnya adalah:</p>
+          <pre><code>Hujan
+  ↓
+Kehilangan hujan (loss)
+  ↓
+Hujan efektif
+  ↓
+Transformasi menjadi limpasan langsung
+  ↓
+Aliran dasar dan penggabungan aliran
+  ↓
+Routing pada reach
+  ↓
+Outlet</code></pre>
+          <p>Metode yang digunakan mengikuti konfigurasi masing-masing Basin Model HEC-HMS. Pada dataset yang tersedia, komponen utamanya mencakup:</p>
           <ul>
-            <li><b>Basin Model HEC-HMS (<code>.basin</code>):</b> elemen, konektivitas, konfigurasi metode, dan parameter model.</li>
-            <li><b>Database spasial proyek (<code>.sqlite</code>):</b> geometri reach/sub-DAS dan atribut yang tersedia.</li>
-            <li><b>Hasil HEC-DSS (<code>.dss</code>):</b> seri debit skenario yang menjadi dasar hidrograf.</li>
-            <li><b>Layer referensi:</b> batas DAS, jaringan sungai, dan toponim untuk kartografi serta penamaan; tidak mengubah hasil routing.</li>
-            <li><b>Data runtime <i>precomputed</i>:</b> GeoJSON, topologi, metadata, dan berkas seri debit terkompresi untuk akses web yang cepat.</li>
+            <li><b>Loss:</b> SCS Curve Number.</li>
+            <li><b>Transform:</b> SCS Unit Hydrograph.</li>
+            <li><b>Baseflow:</b> Recession.</li>
+            <li><b>Routing:</b> Muskingum–Cunge.</li>
+            <li><b>Geometri saluran:</b> penampang trapezoidal.</li>
           </ul>
+          <p>Parameter tidak dianggap sebagai satu nilai yang mewakili seluruh DAS. Nilai parameter dapat berbeda antar-sub-DAS dan antar-reach sesuai model sumber.</p>
+          <p>Preprocessing hanya mengubah format dan struktur penyimpanan agar efisien untuk web. Preprocessing tidak mengganti metode atau menghitung ulang hasil hidrologi HEC-HMS.</p>
         </article>
         <article>
-          <h3>Alur data ke antarmuka</h3>
-          <p><code>.basin + .sqlite + .dss</code> → preprocessing → data runtime <i>precomputed</i> → peta, snapping, hidrograf, dan penelusuran upstream.</p>
-          <p>Preprocessing mengubah format dan struktur penyimpanan, bukan metode maupun hasil perhitungan HEC-HMS. Model sumber dan hasil runtime perlu diproses ulang apabila sumber berubah.</p>
+          <h3>Sumber data model</h3>
+          <p>Model HEC-HMS dibaca dari tiga kelompok berkas sumber:</p>
+          <ul>
+            <li><b>Basin Model (<code>.basin</code>):</b> elemen model, hubungan hulu–hilir, metode, dan parameter.</li>
+            <li><b>Database spasial (<code>.sqlite</code>):</b> centerline <code>reach2d</code>, poligon <code>subbasin2d</code>, dan atribut spasial.</li>
+            <li><b>Hasil HEC-DSS (<code>.dss</code>):</b> seri debit dan hidrograf untuk setiap skenario.</li>
+          </ul>
+          <p>Untuk Reach, <code>FLOW</code> dibaca sebagai debit keluaran dan <code>FLOW-COMBINE</code> sebagai debit masukan. Untuk Subbasin, seri yang digunakan adalah <code>Subbasin/FLOW</code>.</p>
         </article>
         <article>
-          <h3>Referensi dan batasan penggunaan</h3>
-          <p>Rujukan metode utama adalah dokumentasi teknis resmi <b>USACE HEC-HMS</b>. Validitas ilmiah keluaran tetap bergantung pada kualitas input, konfigurasi, kalibrasi, validasi observasi, serta pemeriksaan kontinuitas yang dilakukan di luar viewer ini.</p>
-          <p><a href="https://www.hec.usace.army.mil/software/hec-hms/documentation.aspx" target="_blank" rel="noreferrer">Dokumentasi HEC-HMS ↗</a></p>
+          <h3>Data yang ditampilkan di web</h3>
+          <p>Berkas sumber diproses menjadi data <i>precomputed</i> yang lebih ringan untuk web. Data tersebut mencakup metadata model, topologi jaringan, centerline routing, poligon sub-DAS, batas area model, jaringan sungai, dan seri debit terkompresi.</p>
+          <p>Alurnya adalah:</p>
+          <pre><code>.basin + .sqlite + .dss
+          ↓
+     preprocessing
+          ↓
+  data runtime precomputed
+          ↓
+ peta, snapping, hidrograf,
+ dan penelusuran jaringan</code></pre>
+          <p>Data <i>precomputed</i> dapat dibaca dari `data/hms` secara lokal atau dari Cloudflare R2 saat aplikasi berjalan di production.</p>
+        </article>
+        <article>
+          <h3>Data referensi peta</h3>
+          <p>Batas DAS resmi, jaringan sungai referensi, dan toponim digunakan untuk membantu tampilan peta serta penamaan Titik Kontrol. Data referensi ini tidak mengubah perhitungan hidrologi maupun hasil routing.</p>
+        </article>
+        <article>
+          <h3>Cara membaca hasil</h3>
+          <p>Angka dan grafik pada aplikasi adalah hasil model, bukan pengukuran langsung di sungai. Skenario 2, 10, dan 25 tahun merupakan label pada hasil HEC-HMS. “Selisih waktu puncak” adalah perbedaan waktu puncak dua hidrograf, bukan waktu tempuh hidraulik formal.</p>
+          <div class="app-definition-note"><b>Catatan:</b> aplikasi ini tidak menghitung kedalaman, tinggi muka air, kecepatan, atau luas genangan.</div>
         </article>
       </div>
     </div>
-
     <div id="appToast" class="app-toast hidden" role="status" aria-live="polite"><i data-lucide="info"></i><span id="appToastText"></span></div>
     <div id="basinSourceModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
       <div class="modal-card source-modal"><div class="modal-head"><div><span class="eyebrow">SUMBER DATA</span><h2>Batas DAS</h2></div><button id="closeBasinSourceModal" class="modal-close" type="button"><i data-lucide="x"></i></button></div><p>Batas DAS mengacu pada <b>Keputusan Menteri Kehutanan Nomor 150 Tahun 2025 tentang Penetapan Batas Daerah Aliran Sungai</b>.</p></div>
@@ -356,6 +369,6 @@ window.FLOOD_CONFIG = {
 };
 </script>
 <script defer src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" fetchpriority="high"></script>
-<script defer src="/static/js/spatial.js?v=2.2.1-r5.1-five-class-flow"></script>
-<script defer src="/static/js/flood-routing.js?v=2.2.1-r5.1-five-class-flow"></script>
+<script defer src="/static/js/spatial.js?v=2.2.2-vercel-r2-map-cache"></script>
+<script defer src="/static/js/flood-routing.js?v=2.2.2-vercel-r2-responsive"></script>
 {% endblock %}

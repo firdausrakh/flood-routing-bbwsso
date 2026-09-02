@@ -1086,6 +1086,7 @@
     const payload = await postJson('/api/hec-routing/snap', {
       scenario: state.scenario,
       snap_radius_m: radius,
+      include_identity: true,
       points: [{ point_id: pointId, label: code, lon, lat }],
     });
     const snapped = payload?.points?.[0];
@@ -1097,13 +1098,16 @@
       err.handled = true;
       throw err;
     }
-    // Keep the identity lookup at the original click coordinate so automatic
-    // toponym naming can preserve the clicked left/right side of the river.
-    const identity = await lookupPointIdentity(Number(lon), Number(lat), snapped);
+    // New deployments return identity with the snap, removing one sequential
+    // Vercel request. Keep the fallback for an older rolling deployment.
+    const identity = snapped.identity || await lookupPointIdentity(Number(lon), Number(lat), snapped);
     return { snapped, identity };
   }
 
   function closeAddPointDialog() {
+    // Invalidate an outstanding snap so a response cannot reopen a dialog the
+    // user has already dismissed.
+    state.snapSerial += 1;
     state.pendingAddPoint = null;
     hideModal('floodAddPointModal');
     map.getSource(CONTROL_PREVIEW_SOURCE)?.setData?.({ type:'FeatureCollection', features:[] });

@@ -1,6 +1,6 @@
 {
   "name": "penelusuran-banjir-bbwsso",
-  "version": "2.2.1",
+  "version": "1.0.1.0",
   "description": "Penelusuran Banjir BBWS Serayu Opak - WebGIS flood routing berbasis jaringan sungai dan hasil HEC-HMS",
   "private": true,
   "scripts": {

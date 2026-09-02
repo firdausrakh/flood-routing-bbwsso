@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -43,6 +44,8 @@ _METRICS: dict[str, int] = {
     "lazy_downloads": 0,
 }
 _TOPONYM_LOCK = threading.Lock()
+_DOWNLOAD_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_DOWNLOAD_LOCKS_GUARD = threading.Lock()
 
 
 def _metric_add(name: str, value: int = 1) -> None:
@@ -98,13 +101,21 @@ def _r2_client():
         from botocore.config import Config
     except ImportError as exc:
         raise RuntimeError("DATA_BACKEND=r2 membutuhkan boto3.") from exc
+    workers = max(1, int(os.getenv("R2_DOWNLOAD_WORKERS", "4")))
     return boto3.client(
         "s3",
         endpoint_url=_r2_endpoint_url(),
         aws_access_key_id=values["R2_ACCESS_KEY_ID"],
         aws_secret_access_key=values["R2_SECRET_ACCESS_KEY"],
         region_name="auto",
-        config=Config(signature_version="s3v4", retries={"max_attempts": 4, "mode": "standard"}),
+        config=Config(
+            signature_version="s3v4",
+            retries={"max_attempts": 4, "mode": "standard"},
+            connect_timeout=10,
+            read_timeout=120,
+            max_pool_connections=max(6, workers + 2),
+            tcp_keepalive=True,
+        ),
     )
 
 
@@ -121,7 +132,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _download_lock(ref: RemoteObjectRef) -> threading.Lock:
+    with _DOWNLOAD_LOCKS_GUARD:
+        return _DOWNLOAD_LOCKS.setdefault((ref.bucket, ref.key), threading.Lock())
+
+
 def _download(ref: RemoteObjectRef) -> Path:
+    """Materialize one object, coalescing concurrent requests for the same key."""
+    with _download_lock(ref):
+        return _download_locked(ref)
+
+
+def _download_locked(ref: RemoteObjectRef) -> Path:
     client = _r2_client()
     path = ref.local_path
     if path.exists() and path.stat().st_size > 0:
@@ -151,6 +173,21 @@ def _download(ref: RemoteObjectRef) -> Path:
     tmp.replace(path)
     _metric_add("downloaded_bytes", path.stat().st_size)
     return path
+
+
+def _download_many(refs: list[RemoteObjectRef]) -> list[Path]:
+    """Fetch independent reference objects concurrently on a cold worker."""
+    if len(refs) < 2:
+        return [_download(ref) for ref in refs]
+    workers = max(1, min(int(os.getenv("R2_DOWNLOAD_WORKERS", "4")), len(refs)))
+    if workers == 1:
+        return [_download(ref) for ref in refs]
+    results: list[Path | None] = [None] * len(refs)
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="r2-reference") as pool:
+        pending = {pool.submit(_download, ref): index for index, ref in enumerate(refs)}
+        for future in as_completed(pending):
+            results[pending[future]] = future.result()
+    return [path for path in results if path is not None]
 
 
 def _read_manifest(bucket: str) -> dict[str, Any]:
@@ -215,8 +252,9 @@ def _load_r2() -> ReferenceBundle:
     root = _cache_root() / namespace
     basin_key = key(os.getenv("R2_OFFICIAL_BASINS_KEY", "official_basins.geojson").strip() or "official_basins.geojson")
     river_key = key(os.getenv("R2_OFFICIAL_RIVERS_KEY", "official_rivers.geojson").strip() or "official_rivers.geojson")
-    basin_path = _download(RemoteObjectRef(bucket=bucket, key=basin_key, local_path=root / "official_basins.geojson"))
-    river_path = _download(RemoteObjectRef(bucket=bucket, key=river_key, local_path=root / "official_rivers.geojson"))
+    basin_ref = RemoteObjectRef(bucket=bucket, key=basin_key, local_path=root / "official_basins.geojson")
+    river_ref = RemoteObjectRef(bucket=bucket, key=river_key, local_path=root / "official_rivers.geojson")
+    basin_path, river_path = _download_many([basin_ref, river_ref])
     basins = gpd.read_file(basin_path).reset_index(drop=True)
     rivers = gpd.read_file(river_path).reset_index(drop=True)
     if basins.empty or rivers.empty:

@@ -62,8 +62,8 @@ class ShellPerformanceTests(unittest.TestCase):
         self.assertEqual(headers["cache-control"], "no-cache")
         html = body.decode("utf-8")
         self.assertIn("window.FLOOD_CORE_WARM_PROMISE=fetch('/api/health'", html)
-        self.assertIn('/static/js/spatial.js?v=2.2.1-r5.1-five-class-flow', html)
-        self.assertIn('/static/js/flood-routing.js?v=2.2.1-r5.1-five-class-flow', html)
+        self.assertIn('/static/js/spatial.js?v=2.2.2-vercel-r2-map-cache', html)
+        self.assertIn('/static/js/flood-routing.js?v=2.2.2-vercel-r2-responsive', html)
         self.assertNotIn('/static/js/hss.js', html)
         self.assertNotIn('id="appHeader"', html)
 
@@ -86,6 +86,8 @@ class ShellPerformanceTests(unittest.TestCase):
         self.assertIn('Penelusuran Banjir Tidak Dapat Diproses', template)
         self.assertIn('const MAX_OBSERVATIONS = 10;', js)
         self.assertIn("map.getCanvas().style.cursor = active ? 'crosshair' : '';", js)
+        self.assertIn('include_identity: true', js)
+        self.assertIn('riverAssetCache = new Map()', (root / "static" / "js" / "spatial.js").read_text(encoding="utf-8"))
         self.assertIn('.spatial-page .flood-window-resize-handle,', css)
         self.assertIn('display:none!important', css)
 

@@ -7,6 +7,7 @@ keeps one storage-neutral contract.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 import threading
@@ -15,7 +16,8 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 _LOCAL_HMS_ROOT = ROOT_DIR / "data" / "hms"
-_DOWNLOAD_LOCK = threading.Lock()
+_DOWNLOAD_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_DOWNLOAD_LOCKS_GUARD = threading.Lock()
 _METRICS_LOCK = threading.Lock()
 _METRICS = {"get_requests": 0, "downloaded_bytes": 0, "cache_hits": 0}
 
@@ -88,13 +90,21 @@ def _client():
         from botocore.config import Config
     except ImportError as exc:  # pragma: no cover - depends on deployment extras
         raise RuntimeError("DATA_BACKEND=r2 membutuhkan boto3.") from exc
+    workers = max(1, int(os.getenv("R2_DOWNLOAD_WORKERS", "4")))
     return boto3.client(
         "s3",
         endpoint_url=_endpoint(),
         aws_access_key_id=_required("R2_ACCESS_KEY_ID"),
         aws_secret_access_key=_required("R2_SECRET_ACCESS_KEY"),
         region_name="auto",
-        config=Config(signature_version="s3v4", retries={"max_attempts": 4, "mode": "standard"}),
+        config=Config(
+            signature_version="s3v4",
+            retries={"max_attempts": 4, "mode": "standard"},
+            connect_timeout=10,
+            read_timeout=120,
+            max_pool_connections=max(6, workers + 2),
+            tcp_keepalive=True,
+        ),
     )
 
 
@@ -112,6 +122,42 @@ def _r2_key(rel: Path) -> str:
     return f"{prefix}/{raw}" if prefix else raw
 
 
+@lru_cache(maxsize=1)
+def _runtime_manifest() -> dict[str, object]:
+    """Read optional upload manifest once for size-aware cache hits.
+
+    Old R2 uploads did not have this manifest, so failure deliberately falls
+    back to the previous non-zero-file cache contract.
+    """
+    if backend_name() != "r2":
+        return {}
+    bucket = _required("R2_RUNTIME_BUCKET", "flood-routing")
+    prefix = os.getenv("R2_HMS_PREFIX", "").strip().strip("/")
+    default_key = f"{prefix}/runtime-manifest.json" if prefix else "runtime-manifest.json"
+    key = os.getenv("R2_HMS_MANIFEST_KEY", default_key).strip() or default_key
+    try:
+        _metric("get_requests")
+        body = _client().get_object(Bucket=bucket, Key=key)["Body"].read()
+        payload = json.loads(body.decode("utf-8-sig"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _expected_size(rel: Path) -> int | None:
+    objects = _runtime_manifest().get("objects")
+    meta = objects.get(rel.as_posix()) if isinstance(objects, dict) else None
+    try:
+        return int(meta.get("size")) if isinstance(meta, dict) and meta.get("size") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _object_lock(bucket: str, key: str) -> threading.Lock:
+    with _DOWNLOAD_LOCKS_GUARD:
+        return _DOWNLOAD_LOCKS.setdefault((bucket, key), threading.Lock())
+
+
 def ensure_hms_object(key: str | Path) -> Path:
     """Return a local path for one object relative to the HMS runtime root."""
     rel = _safe_relative(key)
@@ -121,15 +167,19 @@ def ensure_hms_object(key: str | Path) -> Path:
         return path
     if backend_name() != "r2":
         raise RuntimeError("DATA_BACKEND harus 'local' atau 'r2'.")
-    if path.exists() and path.stat().st_size > 0:
+    expected_size = _expected_size(rel)
+    refresh = os.getenv("R2_REFRESH_CACHE", "0").strip().lower() in {"1", "true", "yes", "y"}
+    if not refresh and path.exists() and path.stat().st_size > 0 and (expected_size is None or path.stat().st_size == expected_size):
         _metric("cache_hits")
         return path
-    with _DOWNLOAD_LOCK:
-        if path.exists() and path.stat().st_size > 0:
+    bucket = _required("R2_RUNTIME_BUCKET", "flood-routing")
+    remote_key = _r2_key(rel)
+    # Different objects can download concurrently during warm-up. Requests for
+    # the same object remain coalesced to one transfer.
+    with _object_lock(bucket, remote_key):
+        if not refresh and path.exists() and path.stat().st_size > 0 and (expected_size is None or path.stat().st_size == expected_size):
             _metric("cache_hits")
             return path
-        bucket = _required("R2_RUNTIME_BUCKET", "flood-routing")
-        remote_key = _r2_key(rel)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".part")
         tmp.unlink(missing_ok=True)
@@ -142,6 +192,9 @@ def ensure_hms_object(key: str | Path) -> Path:
         if not tmp.exists() or tmp.stat().st_size <= 0:
             tmp.unlink(missing_ok=True)
             raise RuntimeError(f"R2 object kosong: {bucket}/{remote_key}")
+        if expected_size is not None and tmp.stat().st_size != expected_size:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"Ukuran R2 object tidak sesuai: {bucket}/{remote_key}")
         tmp.replace(path)
         _metric("downloaded_bytes", path.stat().st_size)
         return path
