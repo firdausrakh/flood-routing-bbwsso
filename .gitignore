@@ -1,0 +1,48 @@
+# Rahasia dan konfigurasi lokal
+.env
+.env.*
+!.env.example
+
+# Virtual environment dan cache Python
+.venv/
+venv/
+env/
+.cache/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dependency dan hasil build JavaScript
+node_modules/
+dist/
+build/
+.parcel-cache/
+.vercel/
+
+# Log dan file sementara
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+# File hasil sistem operasi dan editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Data lokal dan dokumen audit
+data/
+*audit*.md
+
+# Artefak lokal preprocessing/deployment
+*.zip
+*.tar
+*.gz.tmp
