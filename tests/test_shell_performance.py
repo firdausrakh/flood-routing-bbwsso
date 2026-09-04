@@ -56,14 +56,22 @@ class ShellPerformanceTests(unittest.TestCase):
         self.assertEqual(headers["content-encoding"], "gzip")
         self.assertIn("accept-encoding", headers.get("vary", "").lower())
 
+    def test_reach_geometry_is_edge_cacheable(self):
+        status, headers, body = asyncio.run(_asgi_get("/api/hec-routing/reaches", accept_encoding="gzip"))
+        self.assertEqual(status, 200)
+        self.assertIn("s-maxage=86400", headers["cache-control"])
+        self.assertEqual(headers["content-encoding"], "gzip")
+        self.assertGreater(len(body), 1000)
+
     def test_html_revalidates_and_loads_routing_only_scripts(self):
         status, headers, body = asyncio.run(_asgi_get("/"))
         self.assertEqual(status, 200)
         self.assertEqual(headers["cache-control"], "no-cache")
         html = body.decode("utf-8")
-        self.assertIn("window.FLOOD_CORE_WARM_PROMISE=fetch('/api/health'", html)
-        self.assertIn('/static/js/spatial.js?v=2.2.2-vercel-r2-map-cache', html)
-        self.assertIn('/static/js/flood-routing.js?v=2.2.2-vercel-r2-responsive', html)
+        self.assertIn("addEventListener('load'", html)
+        self.assertIn("fetch('/api/health'", html)
+        self.assertIn('/static/js/spatial.js?v=2.2.3-performance', html)
+        self.assertIn('/static/js/flood-routing.js?v=2.2.3-performance', html)
         self.assertNotIn('/static/js/hss.js', html)
         self.assertNotIn('id="appHeader"', html)
 
@@ -88,8 +96,24 @@ class ShellPerformanceTests(unittest.TestCase):
         self.assertIn("map.getCanvas().style.cursor = active ? 'crosshair' : '';", js)
         self.assertIn('include_identity: true', js)
         self.assertIn('riverAssetCache = new Map()', (root / "static" / "js" / "spatial.js").read_text(encoding="utf-8"))
+        self.assertIn("state.reachData = await fetchJson('/api/hec-routing/reaches', 'force-cache')", js)
+        self.assertIn("postJson('/api/hec-routing/series'", js)
+        self.assertIn("window.matchMedia('(max-width: 1100px)')", js)
+        self.assertNotIn("qs.set('scenario', modeledRiverScenario)", (root / "static" / "js" / "spatial.js").read_text(encoding="utf-8"))
         self.assertIn('.spatial-page .flood-window-resize-handle,', css)
         self.assertIn('display:none!important', css)
+
+    def test_performance_assets_have_no_merge_conflict_markers(self):
+        root = Path(__file__).parents[1]
+        for relative in (
+            "pnpm-lock.yaml",
+            "static/js/vendor/analytics.mjs",
+            "static/js/vendor/speed-insights.mjs",
+        ):
+            source = (root / relative).read_text(encoding="utf-8")
+            self.assertNotIn("<<<<<<<", source)
+            self.assertNotIn("=======", source)
+            self.assertNotIn(">>>>>>>", source)
 
     def test_frontend_has_no_removed_analysis_actions(self):
         root = Path(__file__).parents[1]

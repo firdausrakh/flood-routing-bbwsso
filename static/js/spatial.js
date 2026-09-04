@@ -22,7 +22,6 @@
   let lastLightBasemap = String(restored.lightBasemap || (currentBasemap === 'esri-dark-gray' ? 'world-topo' : currentBasemap));
   let darkBasemapChanged = false;
   let floodOfficialRiversTemporarilyHidden = false;
-  let modeledRiverScenario = '';
   let riverAssetKey = '';
   let riverAssetPendingKey = '';
   let riverLoadSerial = 0;
@@ -33,6 +32,7 @@
   window.FLOOD_MEASURE_ACTIVE = false;
   let searchPopup = null;
   let toastTimer = null;
+  let basinAssetFallbackActivated = false;
 
   const BASEMAP_DEFS = {
     'world-topo': { tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}'], attribution: 'Tiles © Esri', maxzoom: 19 },
@@ -90,6 +90,19 @@
   });
   window.FLOOD_MAP = map;
 
+  map.on('error', event => {
+    if (basinAssetFallbackActivated || !MAP_ASSETS_BASE) return;
+    const message = String(event?.error?.message || '');
+    const isBasinAssetError = event?.sourceId === 'official-basins'
+      || message.includes('official_basins.geojson')
+      || message.includes(MAP_ASSETS_BASE);
+    if (!isBasinAssetError) return;
+    const source = map.getSource('official-basins');
+    if (!source?.setData) return;
+    basinAssetFallbackActivated = true;
+    source.setData('/api/map-assets/official-basins?proxy=1');
+  });
+
   map.addControl(new ExistingControl('mapSearchForm'), 'top-left');
   map.addControl(new ExistingControl('mapToolbarControl'), 'bottom-right');
   map.addControl(new ExistingControl('coordReadout'), 'bottom-left');
@@ -127,7 +140,6 @@
 
   function modeledRiverUrl(tier = 'full') {
     const qs = new URLSearchParams({ tier: String(tier || 'full') });
-    if (modeledRiverScenario) qs.set('scenario', modeledRiverScenario);
     return `/api/hec-routing/modeled-rivers?${qs.toString()}`;
   }
 
@@ -187,7 +199,7 @@
   }
 
   function riverCacheKey(tier) {
-    return `${modeledRiverScenario || '__default__'}:${tier}`;
+    return tier;
   }
 
   function fetchRiverAsset(tier) {
@@ -207,7 +219,7 @@
 
   function prefetchRiverTiers(currentTier) {
     if ($('autoRiverZoom')?.checked === false) return;
-    const tiers = ['z6-8', 'z8-10', 'z10-11', 'z11-12', 'z12-14', 'full'];
+    const tiers = ['z6-8', 'z8-10', 'z10-11', 'z11-12', 'z12-14'];
     const index = tiers.indexOf(currentTier);
     for (const tier of [tiers[index - 1], tiers[index + 1]]) {
       if (tier) fetchRiverAsset(tier).catch(() => {});
@@ -232,12 +244,6 @@
       if (serial === riverLoadSerial) riverAssetPendingKey = '';
     });
   }
-
-  window.setFloodModeledRiverScenario = scenario => {
-    modeledRiverScenario = String(scenario || '').trim();
-    riverAssetCache.clear();
-    updateRiverAsset(true);
-  };
 
   function applyLayerControls() {
     const basinOn = $('showBasins')?.checked !== false;
@@ -318,6 +324,7 @@
     setTimeout(() => map.resize(), 240);
     window.lucide?.createIcons?.();
   }
+  window.setFloodSidebarCollapsed = value => setSidebarCollapsed(value);
 
   function openModal(el) { el?.classList.remove('hidden'); }
   function closeModal(el) { el?.classList.add('hidden'); }
@@ -518,9 +525,16 @@
     if (!usageNoticeSeenThisBrowserSession()) { markUsageNoticeSeenThisBrowserSession(); openModal($('usageNoticeModal')); }
   }
 
+  let coordReadoutRaf = null;
+  let pendingCoord = null;
   map.on('mousemove', event => {
-    const readout = $('coordReadout');
-    if (readout) readout.textContent = `${event.lngLat.lat.toFixed(6)}, ${event.lngLat.lng.toFixed(6)}`;
+    pendingCoord = [event.lngLat.lat, event.lngLat.lng];
+    if (coordReadoutRaf) return;
+    coordReadoutRaf = requestAnimationFrame(() => {
+      coordReadoutRaf = null;
+      const readout = $('coordReadout');
+      if (readout && pendingCoord) readout.textContent = `${pendingCoord[0].toFixed(6)}, ${pendingCoord[1].toFixed(6)}`;
+    });
   });
   map.on('click', event => {
     try {

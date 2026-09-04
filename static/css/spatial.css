@@ -6567,3 +6567,42 @@ html:-webkit-full-screen .maplibregl-ctrl-top-left .map-search{
 
 /* Metodologi: alur model dibuat mudah dipindai oleh pengguna pemula. */
 .methodology-modal pre{margin:10px 0 14px;padding:14px 16px;background:#f4f7fa;border-radius:5px;overflow:auto;white-space:pre-wrap}.methodology-modal pre code{font:inherit;color:#17283f}
+
+/* v2.2.3 — keep routing tools mutually usable across desktop, tablet, and phone. */
+@media (min-width:1101px){
+  .spatial-page .flood-right-open .flood-bottom-bar{
+    width:min(44vw,calc(100% - var(--sidebar-w) - 29rem))!important;
+  }
+}
+@media (max-width:1100px){
+  .spatial-page .flood-bottom-bar,
+  .spatial-page .flood-right-open .flood-bottom-bar,
+  .sidebar-is-collapsed .flood-bottom-bar,
+  .spatial-page .sidebar-is-collapsed .flood-bottom-bar{
+    left:12px!important;
+    right:58px!important;
+    width:auto!important;
+    max-width:none!important;
+    z-index:30!important;
+  }
+  .spatial-page .flood-right-sidebar{
+    left:12px!important;
+    right:58px!important;
+    width:auto!important;
+    max-width:none!important;
+    z-index:30!important;
+  }
+}
+@media (max-width:700px){
+  .spatial-page .flood-bottom-bar,
+  .spatial-page .flood-right-open .flood-bottom-bar,
+  .sidebar-is-collapsed .flood-bottom-bar,
+  .spatial-page .sidebar-is-collapsed .flood-bottom-bar{
+    left:8px!important;
+    right:52px!important;
+  }
+  .spatial-page .flood-right-sidebar{
+    left:8px!important;
+    right:52px!important;
+  }
+}

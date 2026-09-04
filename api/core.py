@@ -5,6 +5,7 @@ import math
 import os
 import re
 import sqlite3
+import tempfile
 import threading
 import time
 import unicodedata
@@ -93,6 +94,11 @@ class HecObservationRequest(BaseModel):
     # identity.  Keeping this opt-in avoids changing the response used by
     # callers that only need routing geometry.
     include_identity: bool = False
+
+
+class HecSeriesRequest(BaseModel):
+    reach_ids: list[str] = Field(default_factory=list, max_length=1000)
+    scenario: str | None = None
 
 
 # Reference layers are used only for cartography and automatic naming.
@@ -550,7 +556,7 @@ def location_check(
 
 
 @app.get("/api/map-assets/{asset_key}")
-def map_asset(asset_key: str):
+def map_asset(asset_key: str, proxy: bool = Query(default=False)):
     assets = {
         "official-basins": "official_basins.geojson",
         "official-rivers-z6-8": "official_rivers_z6_8.geojson",
@@ -564,7 +570,7 @@ def map_asset(asset_key: str):
     if not filename:
         raise HTTPException(status_code=404, detail="Map asset tidak ditemukan.")
 
-    if MAP_ASSETS_PUBLIC_BASE:
+    if MAP_ASSETS_PUBLIC_BASE and not proxy:
         suffix = f"?v={urllib.parse.quote(MAP_ASSETS_VERSION)}" if MAP_ASSETS_VERSION else ""
         return RedirectResponse(
             f"{MAP_ASSETS_PUBLIC_BASE}/{filename}{suffix}",
@@ -574,7 +580,7 @@ def map_asset(asset_key: str):
 
     local_path = STATIC_DIR / "data" / filename
     if not local_path.exists():
-        cache_dir = ROOT_DIR / ".cache" / "runtime-map-assets"
+        cache_dir = Path(tempfile.gettempdir()) / "flood-routing-map-assets"
         cache_dir.mkdir(parents=True, exist_ok=True)
         local_path = cache_dir / filename
         if asset_key == "official-basins":
@@ -613,7 +619,8 @@ def hec_routing_metadata():
 
 
 @app.get("/api/hec-routing/reaches")
-def hec_routing_reaches(scenario: str | None = Query(default=None)):
+def hec_routing_reaches(response: Response, scenario: str | None = Query(default=None)):
+    response.headers["Cache-Control"] = "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800"
     return hec_reaches_geojson(scenario)
 
 
@@ -640,6 +647,16 @@ def hec_routing_series(reach_ids: str | None = Query(default=None), scenario: st
     selected = [item.strip() for item in (reach_ids or "").split(",") if item.strip()]
     try:
         return selected_reach_series(selected or None, scenario)
+    except DssParserUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"code": "dss_parser_unavailable", "message": str(exc)}) from exc
+    except DssReadError as exc:
+        raise HTTPException(status_code=500, detail={"code": "dss_read_error", "message": str(exc)}) from exc
+
+
+@app.post("/api/hec-routing/series")
+def hec_routing_series_post(payload: HecSeriesRequest):
+    try:
+        return selected_reach_series(payload.reach_ids or None, payload.scenario)
     except DssParserUnavailable as exc:
         raise HTTPException(status_code=503, detail={"code": "dss_parser_unavailable", "message": str(exc)}) from exc
     except DssReadError as exc:

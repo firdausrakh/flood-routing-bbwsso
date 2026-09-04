@@ -4,7 +4,7 @@
 {% block head_extra %}
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" />
 {% if map_assets_public_base %}<link rel="preconnect" href="{{ map_assets_public_base }}" crossorigin>{% endif %}
-<link rel="stylesheet" href="/static/css/spatial.css?v=1.0.1.0" />
+<link rel="stylesheet" href="/static/css/spatial.css?v=1.0.1.1" />
 {% endblock %}
 {% block content %}
 <main id="spatialWorkspace" class="webgis-shell">
@@ -369,6 +369,6 @@ window.FLOOD_CONFIG = {
 };
 </script>
 <script defer src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" fetchpriority="high"></script>
-<script defer src="/static/js/spatial.js?v=2.2.2-vercel-r2-map-cache"></script>
-<script defer src="/static/js/flood-routing.js?v=2.2.2-vercel-r2-responsive"></script>
+<script defer src="/static/js/spatial.js?v=2.2.3-performance"></script>
+<script defer src="/static/js/flood-routing.js?v=2.2.3-performance"></script>
 {% endblock %}

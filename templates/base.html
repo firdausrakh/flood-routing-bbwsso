@@ -12,7 +12,12 @@
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script>try{if(localStorage.getItem('theme')==='dark')document.documentElement.setAttribute('data-theme','dark')}catch(_){}</script>
-  <script>window.FLOOD_CORE_WARM_PROMISE=fetch('/api/health',{cache:'no-store'}).then(r=>r.ok).catch(()=>false);</script>
+  <script>
+    window.FLOOD_CORE_WARM_PROMISE = new Promise(resolve => {
+      const warm = () => fetch('/api/health', { cache: 'no-store' }).then(r => resolve(r.ok)).catch(() => resolve(false));
+      addEventListener('load', () => (window.requestIdleCallback ? requestIdleCallback(warm, { timeout: 2500 }) : setTimeout(warm, 1500)), { once: true });
+    });
+  </script>
   <script defer src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
   <link rel="stylesheet" href="/static/css/app.css?v=1.6.4-min10">
   <link rel="stylesheet" href="/static/css/ui-components.css?v=1.0.0.3-min10">
@@ -24,7 +29,7 @@
     window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
   </script>
   <script type="module">
-    import { injectSpeedInsights } from '/static/js/vendor/speed-insights.mjs';
+    import { injectSpeedInsights } from '/static/js/vendor/speed-insights.mjs?v=1.0.1.1';
     injectSpeedInsights();
   </script>
   <!-- Vercel Web Analytics -->
@@ -32,7 +37,7 @@
     window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
   </script>
   <script type="module">
-    import { inject } from '/static/js/vendor/analytics.mjs';
+    import { inject } from '/static/js/vendor/analytics.mjs?v=1.0.1.1';
     inject();
   </script>
 </head>

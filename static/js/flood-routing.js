@@ -33,6 +33,8 @@
     seriesKey: '',
     frame: 0,
     timer: null,
+    frameRaf: null,
+    pendingFrame: null,
     requestSerial: 0,
     hoverPopup: null,
     hoverReachId: null,
@@ -59,6 +61,7 @@
     idleChart: null,
     idleInspectSerial: 0,
     pendingAddPoint: null,
+    addPointPositionRaf: null,
     routingSelection: null,
     controlPopup: null,
     suppressIdleUntil: 0,
@@ -145,10 +148,6 @@
       return;
     }
     if (code === 'no_flowpath') return;
-  }
-
-  function scenarioQuery() {
-    return state.scenario ? `scenario=${encodeURIComponent(state.scenario)}` : '';
   }
 
   function setLayerVisible(id, visible) {
@@ -389,6 +388,17 @@
     }
   }
 
+  function scheduleFrame(index) {
+    state.pendingFrame = Number(index) || 0;
+    if (state.frameRaf) return;
+    state.frameRaf = requestAnimationFrame(() => {
+      state.frameRaf = null;
+      const next = state.pendingFrame;
+      state.pendingFrame = null;
+      renderFrame(next);
+    });
+  }
+
   function flowWidthExpression() {
     return ['max', 1.45, ['*',
       ['coalesce', ['get', 'base_width'], 1.7],
@@ -415,7 +425,8 @@
   // ke 5 kelas hidrologi: Baseflow, Rising Limb, Mendekati Puncak, Peak, dan Resesi.
 
   function playbackIntervalMs() {
-    return Math.max(120, Math.round(620 / Math.max(0.25, Number(state.playbackRate) || 1)));
+    const routeFloor = state.selectedReachIds.length > 400 ? 220 : (state.selectedReachIds.length > 200 ? 160 : 120);
+    return Math.max(routeFloor, Math.round(620 / Math.max(0.25, Number(state.playbackRate) || 1)));
   }
 
   function updatePlaybackRateUi() {
@@ -432,7 +443,7 @@
       btn.innerHTML = '<i data-lucide="pause"></i>';
       btn.setAttribute('aria-label', 'Jeda animasi banjir');
     }
-    state.timer = setInterval(() => renderFrame(state.frame + 1 >= state.series.times.length ? 0 : state.frame + 1), playbackIntervalMs());
+    state.timer = setInterval(() => scheduleFrame(state.frame + 1 >= state.series.times.length ? 0 : state.frame + 1), playbackIntervalMs());
     window.lucide?.createIcons?.();
   }
 
@@ -444,7 +455,7 @@
   function stepFrame(delta) {
     stopAnimation();
     if (!state.series?.times?.length) return;
-    renderFrame(Math.max(0, Math.min(state.series.times.length - 1, state.frame + Number(delta || 0))));
+    scheduleFrame(Math.max(0, Math.min(state.series.times.length - 1, state.frame + Number(delta || 0))));
   }
 
   function changePlaybackRate(direction) {
@@ -457,11 +468,9 @@
     if (state.timer) startAnimation();
   }
 
-  async function fetchJson(url) {
-    const response = await fetch(url, { cache: 'no-store' });
-    const text = await response.text();
-    let payload = null;
-    try { payload = text ? JSON.parse(text) : null; } catch (_) {}
+  async function fetchJson(url, cache = 'no-store') {
+    const response = await fetch(url, { cache });
+    const payload = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = payload?.detail;
       const err = new Error((typeof detail === 'string' ? detail : detail?.message) || `HTTP ${response.status}`);
@@ -476,9 +485,7 @@
     const response = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify(payload),
     });
-    const text = await response.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (_) {}
+    const data = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = data?.detail;
       const err = new Error((typeof detail === 'string' ? detail : detail?.message) || `HTTP ${response.status}`);
@@ -1118,7 +1125,9 @@
     const modal = $('floodAddPointModal');
     const card = modal?.querySelector('.flood-add-point-modal');
     if (!pending || !modal || !card || modal.classList.contains('hidden')) return;
-    requestAnimationFrame(() => {
+    if (state.addPointPositionRaf) return;
+    state.addPointPositionRaf = requestAnimationFrame(() => {
+      state.addPointPositionRaf = null;
       if (!state.pendingAddPoint || modal.classList.contains('hidden')) return;
       const pt = map.project([Number(pending.lon), Number(pending.lat)]);
       const rect = map.getContainer().getBoundingClientRect();
@@ -1585,7 +1594,10 @@
     const serial = ++state.observationRequestSerial;
     setObservationStatus('Membaca hidrograf sesuai posisi hulu/hilir pada reach2d dan menghitung jarak serta selisih waktu puncak…', 'busy');
     try {
-      const payload = await postJson('/api/hec-routing/observe', { scenario: state.scenario, snap_radius_m: currentSnapRadius(), points: payloadPoints });
+      const [payload] = await Promise.all([
+        postJson('/api/hec-routing/observe', { scenario: state.scenario, snap_radius_m: currentSnapRadius(), points: payloadPoints }),
+        ensureModelLayers(),
+      ]);
       if (serial !== state.observationRequestSerial) return;
       if (payload?.errors?.length) showSnapError(payload.errors[0]);
       state.observationData = payload;
@@ -1611,8 +1623,7 @@
 
   async function ensureReachData() {
     if (state.reachData) return state.reachData;
-    const qs = scenarioQuery();
-    state.reachData = await fetchJson(`/api/hec-routing/reaches${qs ? `?${qs}` : ''}`);
+    state.reachData = await fetchJson('/api/hec-routing/reaches', 'force-cache');
     return state.reachData;
   }
 
@@ -1639,7 +1650,6 @@
     }
     // Legacy reference kept for regression tests: lineMetrics: true
     if (!map.getSource(REACH_SOURCE)) map.addSource(REACH_SOURCE, { type: 'geojson', data: reaches, promoteId: 'route_id', lineMetrics: false });
-    else map.getSource(REACH_SOURCE)?.setData?.(reaches);
     if (!map.getLayer(REACH_BASE_LAYER)) map.addLayer({
       id: REACH_BASE_LAYER, type: 'line', source: REACH_SOURCE,
       layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
@@ -1916,11 +1926,9 @@
     setLayerVisible(REACH_FLOW_LAYER, false);
     setLayerVisible(REACH_FALLING_LAYER, false);
     setLayerVisible(REACH_MOTION_LAYER, false);
-    setStatus('Memuat Q(t) seluruh jaringan dari precompute HEC-HMS…', 'busy');
+    setStatus('Memuat Q(t) jalur terpilih dari precompute HEC-HMS…', 'busy');
     try {
-      const qs = new URLSearchParams({ reach_ids: ids.join(',') });
-      if (state.scenario) qs.set('scenario', state.scenario);
-      const payload = await fetchJson(`/api/hec-routing/series?${qs.toString()}`);
+      const payload = await postJson('/api/hec-routing/series', { reach_ids: ids, scenario: state.scenario });
       if (serial !== state.requestSerial) return;
       state.series = payload;
       state.seriesKey = key;
@@ -2012,18 +2020,6 @@
     if (state.routingVisualizationVisible) loadSelectedSeries(ids).catch(() => {});
   }
 
-  async function initializeGlobalRouting() {
-    await ensureModelLayers();
-    state.selectedReachIds = [];
-    state.routingSelection = null;
-    map.getSource(REACH_SOURCE)?.setData?.(state.reachData || { type: 'FeatureCollection', features: [] });
-    const filter = emptySelectionFilter('route_id');
-    for (const layer of [REACH_BASE_LAYER, REACH_FLOW_HALO_LAYER, REACH_FLOW_LAYER, REACH_FALLING_LAYER, REACH_MOTION_LAYER, REACH_HIT_LAYER]) {
-      if (map.getLayer(layer)) map.setFilter(layer, filter);
-    }
-    applyLayerVisibility();
-  }
-
   function panelForKey(key) {
     const ids = { routing: 'floodRoutingPanel', comparison: 'floodObservationPanel', chart: 'floodChartPanel' };
     return $(ids[key] || '');
@@ -2056,6 +2052,15 @@
     const panel = panelForKey(key);
     if (!panel) return;
     const show = forceVisible == null ? panel.classList.contains('is-hidden') : Boolean(forceVisible);
+    if (show && window.matchMedia('(max-width: 1100px)').matches) {
+      for (const otherKey of ['routing', 'comparison', 'chart']) {
+        if (otherKey !== key) {
+          panelForKey(otherKey)?.classList.add('is-hidden');
+          if (otherKey === 'chart') setChartExpanded(false);
+        }
+      }
+      window.setFloodSidebarCollapsed?.(true);
+    }
     panel.classList.toggle('is-hidden', !show);
     syncDockedPanels();
   }
@@ -2126,23 +2131,16 @@
     select.value = state.scenario; select.disabled = false;
   }
 
-  async function refreshModeledRivers() {
-    try { window.setFloodModeledRiverScenario?.(state.scenario || ''); } catch (_) {}
-  }
-
   async function changeScenario(value) {
     const next = String(value || '').trim();
     if (!next || next === state.scenario) return;
     stopAnimation();
     resetFeatureStates(state.selectedReachIds);
     state.scenario = next;
-    state.reachData = null;
     state.series = null;
     state.seriesKey = '';
     state.observationData = null;
     state.observationKey = '';
-    await refreshModeledRivers();
-    await initializeGlobalRouting();
     await refreshObservationComparison(true);
   }
 
@@ -2156,8 +2154,6 @@
     try {
       state.info = await fetchJson('/api/hec-routing/info');
       populateScenarioSelect();
-      await refreshModeledRivers();
-      await initializeGlobalRouting();
     } catch (err) {
       setStatus(`Jaringan HEC-HMS belum dapat dimuat: ${err.message || err}`, 'warning');
       return;
@@ -2171,7 +2167,7 @@
     $('floodSlowerBtn')?.addEventListener('click', () => changePlaybackRate(-1));
     $('floodFasterBtn')?.addEventListener('click', () => changePlaybackRate(1));
     updatePlaybackRateUi();
-    $('floodTimeSlider')?.addEventListener('input', e => { stopAnimation(); renderFrame(Number(e.target.value)); });
+    $('floodTimeSlider')?.addEventListener('input', e => { stopAnimation(); scheduleFrame(Number(e.target.value)); });
     $('floodAddPointBtn')?.addEventListener('click', () => setAddPointMode(!state.addPointMode));
     $('floodClearPointsBtn')?.addEventListener('click', clearObservationPoints);
     $('floodToggleAllPointsBtn')?.addEventListener('click', toggleAllObservationVisibility);

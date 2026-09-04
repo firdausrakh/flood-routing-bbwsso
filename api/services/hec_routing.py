@@ -176,6 +176,7 @@ def _model_fc(model_id: str, key: str, fallback: str) -> dict[str, Any]:
     return _fc(_model_dir(model) / str(model.get(key) or fallback))
 
 
+@lru_cache(maxsize=8)
 def reaches_geojson(scenario_id: str | None = None) -> dict[str, Any]:
     """Return HMS reach2d routing centerlines (Reach + Subbasin elements)."""
     features = []
@@ -285,7 +286,10 @@ def _width_classes(values: list[Any], peak: float) -> list[int]:
         out.append(min(9, int(ratio * 10.0)))
     return out
 
-def all_reach_series(scenario_id: str | None = None) -> dict[str, Any]:
+def all_reach_series(
+    scenario_id: str | None = None,
+    reach_ids: set[str] | None = None,
+) -> dict[str, Any]:
     """Return Q(t) for every routing centerline keyed by route_id.
 
     ``reaches`` remains the display/outflow series (Reach FLOW + Subbasin FLOW).
@@ -324,6 +328,8 @@ def all_reach_series(scenario_id: str | None = None) -> dict[str, Any]:
         ):
             for eid, vals in (payload.get(series_key) or {}).items():
                 key = f"{mid}:{eid}"
+                if reach_ids is not None and key not in reach_ids:
+                    continue
                 routes[key] = vals
                 peaks[key] = float((payload.get(peak_key) or {}).get(eid) or 0.0)
                 peak_indices[key] = (payload.get(index_key) or {}).get(eid)
@@ -331,6 +337,8 @@ def all_reach_series(scenario_id: str | None = None) -> dict[str, Any]:
                 width_classes[key] = _width_classes(list(vals or []), peaks[key])
         for eid, vals in (payload.get("reach_inflows") or {}).items():
             key = f"{mid}:{eid}"
+            if reach_ids is not None and key not in reach_ids:
+                continue
             inflows[key] = vals
             inflow_peaks[key] = float((payload.get("reach_inflow_peaks") or {}).get(eid) or 0.0)
             inflow_peak_indices[key] = (payload.get("reach_inflow_peak_indices") or {}).get(eid)
@@ -350,28 +358,17 @@ def all_reach_series(scenario_id: str | None = None) -> dict[str, Any]:
 
 
 def selected_reach_series(reach_ids: list[str] | None = None, scenario_id: str | None = None) -> dict[str, Any]:
-    payload = all_reach_series(scenario_id)
     if not reach_ids:
-        return payload
+        return all_reach_series(scenario_id)
     wanted = {str(x).strip() for x in reach_ids if str(x).strip()}
-    routes = {k: v for k, v in payload["reaches"].items() if k in wanted}
-    peaks = {k: v for k, v in payload["reach_peaks"].items() if k in wanted}
-    peak_indices = {k: v for k, v in payload.get("reach_peak_indices", {}).items() if k in wanted}
-    inflows = {k: v for k, v in payload.get("reach_inflows", {}).items() if k in wanted}
-    inflow_peaks = {k: v for k, v in payload.get("reach_inflow_peaks", {}).items() if k in wanted}
-    inflow_peak_indices = {k: v for k, v in payload.get("reach_inflow_peak_indices", {}).items() if k in wanted}
-    route_types = {k: v for k, v in payload.get("route_types", {}).items() if k in wanted}
-    width_classes = {k: v for k, v in payload.get("reach_width_classes", {}).items() if k in wanted}
-    return {
-        **payload,
-        "reaches": routes, "reach_peaks": peaks, "reach_peak_indices": peak_indices,
-        "reach_width_classes": width_classes,
-        "width_class_count": 10,
-        "width_class_breaks_q_qp": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-        "reach_inflows": inflows, "reach_inflow_peaks": inflow_peaks,
-        "reach_inflow_peak_indices": inflow_peak_indices,
-        "route_types": route_types, "selected_reach_count": len(routes),
-    }
+    payload = all_reach_series(scenario_id, wanted)
+    # The map derives its visual state from Q/Qp and does not consume the
+    # parallel integer arrays. Keep them only on the legacy all-series response.
+    payload.pop("reach_width_classes", None)
+    payload.pop("width_class_count", None)
+    payload.pop("width_class_breaks_q_qp", None)
+    payload["selected_reach_count"] = len(payload["reaches"])
+    return payload
 
 def catalog() -> dict[str, Any]:
     return {"mapping_complete": bool(_models()), "reach_count": len(reaches_geojson().get("features", [])), "route_count": len(reaches_geojson().get("features", [])),
