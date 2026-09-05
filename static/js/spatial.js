@@ -5,6 +5,8 @@
   const config = window.FLOOD_CONFIG || {};
   const MAP_ASSETS_BASE = String(config.mapAssetsBase || '').replace(/\/$/, '');
   const MAP_ASSETS_VERSION = String(config.mapAssetsVersion || '');
+  const RIVER_ZOOM = { 1: 6.5, 2: 6.5, 3: 10.5, other: 12.5 };
+  const RIVER_KEYS = ['1', '2', '3', 'other'];
   const STATE_KEY = 'penelusuranBanjirMapUiV2';
 
   function readState() {
@@ -26,6 +28,7 @@
   let riverAssetPendingKey = '';
   let riverLoadSerial = 0;
   const riverAssetCache = new Map();
+  let lastRiverLabelFilterSignature = '';
   let homeBounds = null;
   let measureActive = false;
   let measurePoints = [];
@@ -143,6 +146,59 @@
     return `/api/hec-routing/modeled-rivers?${qs.toString()}`;
   }
 
+  function riverOrderExpression() {
+    return ['to-number', ['coalesce', ['get', 'river_order_int'], ['get', 'river_order']], 0];
+  }
+
+  function riverFilter(key) {
+    const order = riverOrderExpression();
+    return key === 'other'
+      ? ['all', ['!=', order, 1], ['!=', order, 2], ['!=', order, 3]]
+      : ['==', order, Number(key)];
+  }
+
+  function riverMapLabelExpression() {
+    return ['case',
+      ['!=', ['coalesce', ['get', 'river_name'], ''], ''],
+      ['concat', 'K. ', ['to-string', ['get', 'river_name']]],
+      ['coalesce', ['get', 'river_label'], ''],
+    ];
+  }
+
+  function riverLabelSizeExpression() {
+    const order = riverOrderExpression();
+    const sizeAt = zoom => ['match', order, 1, zoom === 7 ? 11 : 14, 2, zoom === 7 ? 10 : 12.5, 3, zoom === 7 ? 9 : 11.5, zoom === 7 ? 8.5 : 10];
+    return ['interpolate', ['linear'], ['zoom'], 7, sizeAt(7), 15, sizeAt(15)];
+  }
+
+  function riverLabelSortKeyExpression() {
+    return ['match', riverOrderExpression(), 1, 10, 2, 20, 3, 30, 40];
+  }
+
+  function enabledRiverOrdersForCurrentZoom() {
+    const auto = $('autoRiverZoom')?.checked !== false;
+    const zoom = map?.getZoom?.() ?? 0;
+    return RIVER_KEYS.filter(key => {
+      const enabled = document.querySelector(`.river-order-toggle[data-order="${key}"]`)?.checked !== false;
+      return enabled && (!auto || zoom >= RIVER_ZOOM[key]);
+    });
+  }
+
+  function riverLabelFilter() {
+    const allowed = enabledRiverOrdersForCurrentZoom();
+    if (!allowed.length) return ['==', 1, 0];
+    const filters = allowed.map(riverFilter);
+    return filters.length === 1 ? filters[0] : ['any', ...filters];
+  }
+
+  function updateRiverLabelFilter({ force = false } = {}) {
+    if (!map?.getLayer?.('official-river-label')) return;
+    const signature = enabledRiverOrdersForCurrentZoom().join(',');
+    if (!force && signature === lastRiverLabelFilterSignature) return;
+    lastRiverLabelFilterSignature = signature;
+    map.setFilter('official-river-label', riverLabelFilter());
+  }
+
   function setLayerVisible(id, visible) {
     if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
   }
@@ -165,25 +221,36 @@
       paint: { 'text-color': '#7a5c00', 'text-halo-color': 'rgba(255,255,255,.9)', 'text-halo-width': 1.5 },
     });
 
-    // Do not hand a URL directly to MapLibre here.  It would re-request and
-    // re-parse a large GeoJSON each time a user crosses a zoom threshold.
-    // Tier payloads are kept in memory and only the selected one is applied.
+    // Rendering follows Delineasi DTA exactly; only the source geometry differs:
+    // this endpoint returns the network clipped to the HEC-HMS modeled area.
     if (!map.getSource('official-rivers')) map.addSource('official-rivers', {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
-      tolerance: 0.8,
-      buffer: 64,
-      maxzoom: 12,
+      tolerance: 0,
+      maxzoom: 24,
+      buffer: 128,
+      lineMetrics: true,
     });
-    const riverPaint = { 'line-color': '#0083d7', 'line-opacity': 0.88, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 10, 1.5, 14, 2.6] };
-    if (!map.getLayer('official-river-1')) map.addLayer({ id: 'official-river-1', type: 'line', source: 'official-rivers', filter: ['==', ['to-string', ['get', 'river_order']], '1'], paint: riverPaint });
-    if (!map.getLayer('official-river-2')) map.addLayer({ id: 'official-river-2', type: 'line', source: 'official-rivers', filter: ['==', ['to-string', ['get', 'river_order']], '2'], paint: riverPaint });
-    if (!map.getLayer('official-river-3')) map.addLayer({ id: 'official-river-3', type: 'line', source: 'official-rivers', filter: ['==', ['to-string', ['get', 'river_order']], '3'], paint: riverPaint });
-    if (!map.getLayer('official-river-other')) map.addLayer({ id: 'official-river-other', type: 'line', source: 'official-rivers', filter: ['match', ['to-string', ['get', 'river_order']], ['1', '2', '3'], false, true], paint: riverPaint });
+    for (const key of RIVER_KEYS) {
+      if (!map.getLayer(`official-river-${key}`)) map.addLayer({
+        id: `official-river-${key}`,
+        type: 'line',
+        source: 'official-rivers',
+        filter: riverFilter(key),
+        minzoom: RIVER_ZOOM[key],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#0083d7', 'line-width': Math.max(0.55, 2 * ({ 1: 1, 2: 0.70, 3: 0.48, other: 0.34 }[key])), 'line-opacity': 1 },
+      });
+    }
     if (!map.getLayer('official-river-label')) map.addLayer({
-      id: 'official-river-label', type: 'symbol', source: 'official-rivers', minzoom: 9,
-      layout: { 'symbol-placement': 'line', 'text-field': ['coalesce', ['get', 'river_label'], ['get', 'river_name']], 'text-size': ['interpolate', ['linear'], ['zoom'], 8, 10, 13, 11.5], 'text-keep-upright': true, 'text-max-angle': 30, 'text-offset': [0, 1.25], 'text-anchor': 'top', 'symbol-spacing': 300, 'text-padding': 4 },
-      paint: { 'text-color': '#006fac', 'text-halo-color': 'rgba(255,255,255,.96)', 'text-halo-width': 2.0 },
+      id: 'official-river-label', type: 'symbol', source: 'official-rivers', filter: riverLabelFilter(), minzoom: RIVER_ZOOM[1],
+      layout: {
+        'symbol-placement': 'line', 'symbol-spacing': 220, 'symbol-sort-key': riverLabelSortKeyExpression(), 'symbol-z-order': 'source',
+        'text-field': riverMapLabelExpression(), 'text-size': riverLabelSizeExpression(),
+        'text-rotation-alignment': 'map', 'text-pitch-alignment': 'map', 'text-keep-upright': true, 'text-max-angle': 70,
+        'text-offset': [0, -0.55], 'text-padding': 1, 'text-allow-overlap': false, 'text-ignore-placement': false,
+      },
+      paint: { 'text-color': '#0083d7', 'text-halo-color': 'rgba(255,255,255,.97)', 'text-halo-width': 1.45 },
     });
 
     if (!map.getSource('esri-hillshade')) map.addSource('esri-hillshade', { type: 'raster', tiles: ['https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 16, attribution: 'Hillshade © Esri' });
@@ -236,6 +303,8 @@
       map.getSource('official-rivers')?.setData?.(data);
       riverAssetKey = next;
       riverAssetPendingKey = '';
+      lastRiverLabelFilterSignature = '';
+      updateRiverLabelFilter({ force: true });
       // Preload only adjacent tiers. It makes common zoom-in/out interactions
       // immediate without downloading the whole hierarchy at once.
       const schedule = window.requestIdleCallback || (callback => setTimeout(callback, 180));
@@ -254,12 +323,18 @@
 
     const riverLinesOn = $('showRivers')?.checked !== false && !floodOfficialRiversTemporarilyHidden;
     const riverLabelsOn = ($('showRiverLabels')?.checked !== false);
-    const enabled = new Set([...document.querySelectorAll('.river-order-toggle:checked')].map(el => el.dataset.order));
-    setLayerVisible('official-river-1', riverLinesOn && enabled.has('1'));
-    setLayerVisible('official-river-2', riverLinesOn && enabled.has('2'));
-    setLayerVisible('official-river-3', riverLinesOn && enabled.has('3'));
-    setLayerVisible('official-river-other', riverLinesOn && enabled.has('other'));
+    const auto = $('autoRiverZoom')?.checked !== false;
+    for (const key of RIVER_KEYS) {
+      const enabled = document.querySelector(`.river-order-toggle[data-order="${key}"]`)?.checked !== false;
+      const layerId = `official-river-${key}`;
+      if (map.getLayer(layerId)) {
+        map.setLayerZoomRange(layerId, auto ? RIVER_ZOOM[key] : 0, 24);
+        setLayerVisible(layerId, riverLinesOn && enabled);
+      }
+    }
+    if (map.getLayer('official-river-label')) map.setLayerZoomRange('official-river-label', auto ? RIVER_ZOOM[1] : 0, 24);
     setLayerVisible('official-river-label', riverLabelsOn);
+    updateRiverLabelFilter({ force: true });
 
     setLayerVisible('esri-hillshade-layer', Boolean($('showHillshade')?.checked));
     const hillOpacity = Math.max(0, Math.min(1, Number($('hillshadeOpacity')?.value || 100) / 100));
@@ -269,10 +344,10 @@
     const lineWidth = Number($('lineWidth')?.value || 2);
     if ($('lineWidthValue')) $('lineWidthValue').textContent = `${lineWidth.toFixed(1)} px`;
     if (map.getLayer('official-basin-line')) map.setPaintProperty('official-basin-line', 'line-width', Math.max(0.8, lineWidth));
-    // Official network uses hierarchical order: 1 = main stem, larger numbers = smaller tributaries.
-    const riverWidthFactors = { 'official-river-1': 1.55, 'official-river-2': 1.15, 'official-river-3': 0.82, 'official-river-other': 0.58 };
-    for (const [id, factor] of Object.entries(riverWidthFactors)) {
-      if (map.getLayer(id)) map.setPaintProperty(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 6, Math.max(0.45, lineWidth * factor * 0.38), 10, Math.max(0.7, lineWidth * factor * 0.68), 14, Math.max(1.0, lineWidth * factor * 1.08)]);
+    const riverWidthFactors = { 1: 1, 2: 0.70, 3: 0.48, other: 0.34 };
+    for (const key of RIVER_KEYS) {
+      const id = `official-river-${key}`;
+      if (map.getLayer(id)) map.setPaintProperty(id, 'line-width', Math.max(0.55, lineWidth * riverWidthFactors[key]));
     }
     try { window.setFloodRoutingLineWidthScale?.(lineWidth / 2); } catch (_) {}
     const basinColor = $('basinColor')?.value || '#9b7300';
@@ -471,7 +546,7 @@
     $('layerBtn')?.addEventListener('click', () => $('layerPanel')?.classList.toggle('hidden'));
     $('closeLayerPanel')?.addEventListener('click', () => $('layerPanel')?.classList.add('hidden'));
     for (const id of ['showHillshade', 'showBasins', 'showBasinLabels', 'showRivers', 'showRiverLabels']) $(id)?.addEventListener('change', applyLayerControls);
-    $('autoRiverZoom')?.addEventListener('change', () => { updateRiverAsset(true); applyLayerControls(); });
+    $('autoRiverZoom')?.addEventListener('change', () => { applyLayerControls(); updateRiverAsset(true); });
     for (const el of document.querySelectorAll('.river-order-toggle')) el.addEventListener('change', applyLayerControls);
     for (const id of ['hillshadeOpacity', 'lineWidth', 'basinColor', 'riverColor']) $(id)?.addEventListener('input', applyLayerControls);
     $('resetColorsBtn')?.addEventListener('click', () => {
@@ -549,6 +624,7 @@
   map.on('zoomend', () => {
     if ($('autoRiverZoom')?.checked !== false) updateRiverAsset();
   });
+  map.on('zoom', () => updateRiverLabelFilter());
   map.on('moveend', () => {
     const center = map.getCenter();
     writeState({ camera: { center: [center.lng, center.lat], zoom: map.getZoom() } });

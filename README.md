@@ -135,7 +135,11 @@ Layer referensi digunakan untuk peta dan penamaan, bukan untuk menghitung routin
 - `official_reference.gpkg` untuk batas DAS dan referensi resmi.
 - `official_rivers_original.gpkg` untuk jaringan sungai dengan atribut sumber.
 
-Geometri sungai referensi dapat di-clip ke modeled area dan digeneralisasi berdasarkan zoom. Proses kartografi ini tidak mengubah hasil simulasi.
+Layer **official rivers** pada halaman Penelusuran Banjir menggunakan geometri jaringan sungai resmi yang telah di-clip ke modeled area HEC-HMS. Endpoint `/api/hec-routing/modeled-rivers` menyediakan tier tampilan berdasarkan zoom, sehingga jaringan di luar cakupan model tidak ikut ditampilkan dan tidak memengaruhi routing.
+
+Parameter tampilan official rivers mengikuti kontrak visual Delineasi DTA: batas zoom orde 1–3 dan `other`, generalisasi berbasis tier, ketebalan garis berdasarkan orde, label sungai dengan prioritas collision, serta parameter GeoJSON yang menjaga presisi dan kualitas garis. Kesamaan ini hanya berlaku untuk kartografi/rendering; algoritma penelusuran, chainage, pemilihan seri debit, dan topologi HEC-HMS tetap memakai mekanisme Penelusuran Banjir.
+
+Geometri sungai referensi dan proses kartografi tidak mengubah hasil simulasi.
 
 ## Preprocessing HEC-HMS
 
@@ -184,6 +188,10 @@ Saat pengguna menambahkan Titik Kontrol, sistem:
 3. Mencocokkan titik dengan Reach atau Subbasin.
 4. Menentukan seri debit sesuai jenis elemen dan posisi titik.
 5. Mengikuti topologi `.basin` untuk mengambil jaringan upstream.
+
+Selama proses penambahan titik, peta menampilkan titik pilihan asli berwarna putih, titik hasil snapping berwarna biru tua, dan garis penghubung putus-putus. Jarak snapping ditampilkan pada dialog; garis penghubung hanya ditampilkan bila jaraknya lebih dari 0,25 m. Peringatan pergeseran jauh memakai ambang adaptif yang dibatasi 150–500 m.
+
+Pratinjau titik dibuat sejak peta selesai dimuat, sebelum request HEC-HMS pertama, sehingga titik pertama langsung terlihat. Jika model kala ulang tidak tersedia, request dibatalkan dan seluruh marker pratinjau dibersihkan sebelum modal peringatan ditampilkan.
 
 Pada Reach, posisi titik menggunakan aturan proxy sederhana:
 
@@ -291,6 +299,12 @@ pytest -q
 node --check static\js\spatial.js
 node --check static\js\flood-routing.js
 python -m py_compile api\app.py api\core.py
+```
+
+Pemeriksaan parity tampilan dan interaksi Penelusuran Banjir:
+
+```bat
+pytest -q tests/test_dta_parity.py tests/test_hec_routing.py tests/test_shell_performance.py
 ```
 
 Pemeriksaan struktur dataset mencakup kecocokan elemen `.basin` dengan centerline SQLite, kelengkapan seri DSS, arah centerline, topologi downstream, dan konsistensi metadata runtime. Pemeriksaan tersebut tidak menggantikan kalibrasi, validasi terhadap data observasi, analisis sensitivitas, atau pemeriksaan ketidakpastian model.

@@ -23,6 +23,7 @@
   const MAX_OBSERVATIONS = 10;
   const MAX_NAME_LENGTH = 25;
   const EXISTING_POINT_EXCLUSION_RADIUS_M = 100;
+  const MAP_POINT_CLICK_DEBOUNCE_MS = 180;
   const POINT_COLORS = ['#1d70b8', '#d94841', '#2f8b57', '#8c5bd1', '#e47a22', '#0b8f8f', '#a45b2a', '#547535', '#b13f78', '#5366a8'];
 
   const state = {
@@ -49,6 +50,8 @@
     addPointMode: false,
     movePointId: null,
     snapSerial: 0,
+    snapAbortController: null,
+    mapPointClickTimer: null,
     chart: null,
     chartRuntimePromise: null,
     chartPortalPlaceholder: null,
@@ -127,6 +130,10 @@
     return Number.isFinite(value) && value > 0 ? value : 300;
   }
 
+  function snapWarningThreshold(radius = currentSnapRadius()) {
+    return Math.max(150, Math.min(500, Number(radius || 300) * 0.65));
+  }
+
   function showModal(id) {
     const el = $(id);
     if (!el) return;
@@ -141,9 +148,18 @@
     el.setAttribute('aria-hidden', 'true');
   }
 
+  function clearControlPreviewFeatures() {
+    map.getSource(CONTROL_PREVIEW_SOURCE)?.setData?.({ type: 'FeatureCollection', features: [] });
+  }
+
   function showSnapError(error) {
     const code = String(error?.code || '');
     if (code === 'outside_modeled_area' || code === 'scenario_unavailable') {
+      // The DTA interaction removes its requested-point preview as soon as
+      // validation rejects the location. Do the same before showing this modal.
+      state.pendingAddPoint = null;
+      clearControlPreviewFeatures();
+      setObservationStatus('', 'neutral');
       showModal('modelUnavailableModal');
       return;
     }
@@ -481,9 +497,9 @@
     return payload;
   }
 
-  async function postJson(url, payload) {
+  async function postJson(url, payload, { signal = null } = {}) {
     const response = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify(payload),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify(payload), signal,
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
@@ -982,6 +998,8 @@
   }
 
   function clearObservationPoints() {
+    cancelScheduledObservationAdd();
+    cancelSnapRequest();
     closeControlPointPopup();
     destroyIdleChart();
     if (state.idlePopup) { try { state.idlePopup.remove(); } catch (_) {} state.idlePopup = null; }
@@ -1012,6 +1030,7 @@
 
   function showControlCoordinatePreview(lon, lat) {
     clearControlCoordinatePreview();
+    ensureControlPointPreviewLayers();
     state.coordinatePreview = { lon: Number(lon), lat: Number(lat) };
     const source = map.getSource(CONTROL_PREVIEW_SOURCE);
     source?.setData?.({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { kind: 'requested' }, geometry: { type: 'Point', coordinates: [Number(lon), Number(lat)] } }] });
@@ -1052,6 +1071,9 @@
     if (state.addPointMode) {
       state.movePointId = null; closeControlPointPopup(); clearReachHover(); destroyIdleChart();
       if (state.idlePopup) { try { state.idlePopup.remove(); } catch (_) {} state.idlePopup = null; }
+    } else {
+      cancelScheduledObservationAdd();
+      cancelSnapRequest();
     }
     window.FLOOD_ROUTING_CLICK_MODE = state.addPointMode || Boolean(state.movePointId);
     const btn = $('floodAddPointBtn');
@@ -1076,6 +1098,8 @@
   function armMoveObservationPoint(id) {
     const p = state.observationPoints.find(item => item.point_id === id);
     if (!p) return;
+    cancelScheduledObservationAdd();
+    cancelSnapRequest();
     state.addPointMode = false;
     state.movePointId = id;
     window.FLOOD_ROUTING_CLICK_MODE = true;
@@ -1088,20 +1112,50 @@
     window.lucide?.createIcons?.();
   }
 
-  async function snapObservationPayload(pointId, code, lon, lat) {
+  function cancelScheduledObservationAdd() {
+    if (state.mapPointClickTimer) {
+      clearTimeout(state.mapPointClickTimer);
+      state.mapPointClickTimer = null;
+    }
+  }
+
+  function cancelSnapRequest() {
+    state.snapSerial += 1;
+    if (state.snapAbortController) {
+      try { state.snapAbortController.abort(); } catch (_) {}
+      state.snapAbortController = null;
+    }
+  }
+
+  function scheduleObservationAt(lon, lat) {
+    cancelScheduledObservationAdd();
+    cancelSnapRequest();
+    ensureControlPointPreviewLayers();
+    map.getSource(CONTROL_PREVIEW_SOURCE)?.setData?.({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', properties: { kind: 'requested' }, geometry: { type: 'Point', coordinates: [Number(lon), Number(lat)] } }],
+    });
+    state.mapPointClickTimer = setTimeout(() => {
+      state.mapPointClickTimer = null;
+      addObservationAt(lon, lat).catch(() => {});
+    }, MAP_POINT_CLICK_DEBOUNCE_MS);
+  }
+
+  async function snapObservationPayload(pointId, code, lon, lat, { signal = null } = {}) {
     const radius = currentSnapRadius();
     const payload = await postJson('/api/hec-routing/snap', {
       scenario: state.scenario,
       snap_radius_m: radius,
       include_identity: true,
       points: [{ point_id: pointId, label: code, lon, lat }],
-    });
+    }, { signal });
     const snapped = payload?.points?.[0];
     if (!snapped) {
       const detail = payload?.errors?.[0] || { code: 'no_flowpath', radius_m: radius, message: `Tidak ditemukan jalur aliran dalam radius ${Math.round(radius)} m.` };
       showSnapError(detail);
       const err = new Error(detail.message || 'Titik tidak dapat diproses.');
       err.code = detail.code;
+      err.identity = detail.identity || null;
       err.handled = true;
       throw err;
     }
@@ -1114,10 +1168,11 @@
   function closeAddPointDialog() {
     // Invalidate an outstanding snap so a response cannot reopen a dialog the
     // user has already dismissed.
-    state.snapSerial += 1;
+    cancelScheduledObservationAdd();
+    cancelSnapRequest();
     state.pendingAddPoint = null;
     hideModal('floodAddPointModal');
-    map.getSource(CONTROL_PREVIEW_SOURCE)?.setData?.({ type:'FeatureCollection', features:[] });
+    clearControlPreviewFeatures();
   }
 
   function positionAddPointDialog() {
@@ -1150,9 +1205,11 @@
   }
 
   function populateAddPointDialog(pending) {
+    ensureControlPointPreviewLayers();
     const requested = `${formatCoordinateNumber(pending.lat)}, ${formatCoordinateNumber(pending.lon)}`;
     const hasSnap = Boolean(pending.snapped && Number.isFinite(Number(pending.snapped.snapped_lon)) && Number.isFinite(Number(pending.snapped.snapped_lat)));
     const distance = hasSnap ? Number(pending.snapped.snap_distance_m || 0) : null;
+    const farSnap = Boolean(hasSnap && Number.isFinite(distance) && distance > snapWarningThreshold());
     const riverName = String(pending.identity?.official_river?.name || 'Sungai Tanpa Nama').trim() || 'Sungai Tanpa Nama';
     const basinName = String(pending.identity?.official_basin?.name || '—').trim() || '—';
     if ($('floodAddRequestedCoords')) $('floodAddRequestedCoords').textContent = requested;
@@ -1166,9 +1223,10 @@
     if (info) info.classList.toggle('hidden', !hasSnap);
     if (snappedRow) snappedRow.classList.toggle('hidden', !hasSnap);
     if (warning) {
-      warning.classList.toggle('hidden', hasSnap);
+      warning.classList.toggle('hidden', hasSnap && !farSnap);
       const span = warning.querySelector('span');
-      if (span && !hasSnap) span.textContent = `Tidak ditemukan jalur aliran dalam radius ${Math.round(currentSnapRadius())} m. Perbesar radius snapping pada Pengaturan Lanjutan.`;
+      if (span && farSnap) span.innerHTML = `Titik akan digeser <b>${escapeHtml(formatDistanceMeters(distance))}</b> ke jalur aliran terdekat.`;
+      else if (span && !hasSnap) span.textContent = `Tidak ditemukan jalur aliran dalam radius ${Math.round(currentSnapRadius())} m. Perbesar radius snapping pada Pengaturan Lanjutan.`;
     }
     const autoName = String(pending.identity?.toponym?.name || `Titik ${state.observationPoints.length + 1}`).trim().slice(0, 25);
     const nameInput = $('floodAddPointName');
@@ -1183,7 +1241,7 @@
     if (hasSnap) {
       const requestedCoords = [Number(pending.lon), Number(pending.lat)];
       const snappedCoords = [Number(pending.snapped.snapped_lon), Number(pending.snapped.snapped_lat)];
-      if (requestedCoords[0] !== snappedCoords[0] || requestedCoords[1] !== snappedCoords[1]) features.push({ type:'Feature', properties:{kind:'connector'}, geometry:{type:'LineString',coordinates:[requestedCoords, snappedCoords]} });
+      if (Number.isFinite(distance) && distance > 0.25) features.push({ type:'Feature', properties:{kind:'connector'}, geometry:{type:'LineString',coordinates:[requestedCoords, snappedCoords]} });
       features.push({ type:'Feature', properties:{kind:'snapped'}, geometry:{type:'Point',coordinates:snappedCoords} });
     }
     map.getSource(CONTROL_PREVIEW_SOURCE)?.setData?.({type:'FeatureCollection',features});
@@ -1210,24 +1268,35 @@
       setObservationStatus(`Maksimal ${MAX_OBSERVATIONS} Titik Kontrol.`, 'warning');
       return;
     }
+    cancelScheduledObservationAdd();
+    cancelSnapRequest();
+    const controller = new AbortController();
+    state.snapAbortController = controller;
     const pointId = `F${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const internalLabel = nextPointLabel();
     const serial = ++state.snapSerial;
     setObservationStatus('Menempatkan Titik Kontrol pada jaringan sungai dan membaca identitas lokasi…', 'busy');
     try {
-      const { snapped, identity } = await snapObservationPayload(pointId, internalLabel, lon, lat);
+      const { snapped, identity } = await snapObservationPayload(pointId, internalLabel, lon, lat, { signal: controller.signal });
       if (serial !== state.snapSerial) return;
       state.pendingAddPoint = { pointId, internalLabel, lon: Number(lon), lat: Number(lat), snapped, identity };
       populateAddPointDialog(state.pendingAddPoint);
       setObservationStatus('', 'neutral');
     } catch (err) {
-      if (err?.code === 'no_flowpath') {
-        const identity = await lookupPointIdentity(Number(lon), Number(lat), null);
+      if (err?.code === 'outside_modeled_area' || err?.code === 'scenario_unavailable') {
+        if (!err?.handled) showSnapError(err);
+      } else if (err?.code === 'no_flowpath') {
+        const identity = err.identity || await lookupPointIdentity(Number(lon), Number(lat), null);
         if (serial !== state.snapSerial) return;
         state.pendingAddPoint = { pointId, internalLabel, lon:Number(lon), lat:Number(lat), snapped:null, identity, snapError:err };
         populateAddPointDialog(state.pendingAddPoint);
         setObservationStatus('', 'neutral');
-      } else if (!err?.handled) setObservationStatus(`Titik Kontrol belum dapat ditambahkan: ${err.message || err}`, 'warning');
+      } else if (err?.name !== 'AbortError' && !err?.handled) {
+        clearControlPreviewFeatures();
+        setObservationStatus(`Titik Kontrol belum dapat ditambahkan: ${err.message || err}`, 'warning');
+      }
+    } finally {
+      if (state.snapAbortController === controller) state.snapAbortController = null;
     }
   }
 
@@ -1268,10 +1337,14 @@
   async function moveObservationAt(id, lon, lat) {
     const p = state.observationPoints.find(item => item.point_id === id);
     if (!p) return;
+    cancelScheduledObservationAdd();
+    cancelSnapRequest();
+    const controller = new AbortController();
+    state.snapAbortController = controller;
     const serial = ++state.snapSerial;
     setObservationStatus(`Memindahkan ${observationDisplayName(p)} pada jaringan sungai…`, 'busy');
     try {
-      const { snapped, identity } = await snapObservationPayload(p.point_id, observationCode(p), lon, lat);
+      const { snapped, identity } = await snapObservationPayload(p.point_id, observationCode(p), lon, lat, { signal: controller.signal });
       if (serial !== state.snapSerial) return;
       p.lon = Number(lon); p.lat = Number(lat);
       Object.assign(p, snapped);
@@ -1284,8 +1357,11 @@
       await refreshObservationComparison(true);
       setObservationStatus(`${observationDisplayName(p)} berhasil dipindahkan.`, 'ready');
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       state.movePointId = null; window.FLOOD_ROUTING_CLICK_MODE = false; setAddPointMode(false);
       setObservationStatus(`Titik belum dapat dipindahkan: ${err.message || err}`, 'warning');
+    } finally {
+      if (state.snapAbortController === controller) state.snapAbortController = null;
     }
   }
 
@@ -1411,11 +1487,12 @@
       }
     }
     if (state.movePointId) {
+      cancelScheduledObservationAdd();
       moveObservationAt(state.movePointId, e.lngLat.lng, e.lngLat.lat).catch(() => {});
       return true;
     }
     if (state.addPointMode) {
-      addObservationAt(e.lngLat.lng, e.lngLat.lat).catch(() => {});
+      scheduleObservationAt(e.lngLat.lng, e.lngLat.lat);
       return true;
     }
     if (idleInspectionAllowed()) {
@@ -1641,6 +1718,18 @@
     if (map.getLayer(REACH_FALLING_LAYER)) map.setPaintProperty(REACH_FALLING_LAYER, 'line-color', dark ? '#e879f9' : '#9b00d4');
   }
 
+  function ensureControlPointPreviewLayers() {
+    if (!map.getSource(CONTROL_PREVIEW_SOURCE)) map.addSource(CONTROL_PREVIEW_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    if (!map.getLayer(CONTROL_PREVIEW_CONNECTOR_LAYER)) map.addLayer({ id: CONTROL_PREVIEW_CONNECTOR_LAYER, type: 'line', source: CONTROL_PREVIEW_SOURCE, filter: ['==', ['get', 'kind'], 'connector'], paint: { 'line-color': '#596779', 'line-width': 1.6, 'line-dasharray': [2, 2], 'line-opacity': 0.9 } });
+    if (!map.getLayer(CONTROL_PREVIEW_HALO_LAYER)) map.addLayer({ id: CONTROL_PREVIEW_HALO_LAYER, type: 'circle', source: CONTROL_PREVIEW_SOURCE, filter: ['==', ['get', 'kind'], 'requested'], paint: { 'circle-radius': 6, 'circle-color': '#ffffff', 'circle-stroke-color': '#596779', 'circle-stroke-width': 2 } });
+    if (!map.getLayer(CONTROL_PREVIEW_POINT_LAYER)) map.addLayer({ id: CONTROL_PREVIEW_POINT_LAYER, type: 'circle', source: CONTROL_PREVIEW_SOURCE, filter: ['==', ['get', 'kind'], 'snapped'], paint: { 'circle-radius': 7, 'circle-color': '#223468', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.2 } });
+    try {
+      map.moveLayer(CONTROL_PREVIEW_CONNECTOR_LAYER);
+      map.moveLayer(CONTROL_PREVIEW_HALO_LAYER);
+      map.moveLayer(CONTROL_PREVIEW_POINT_LAYER);
+    } catch (_) {}
+  }
+
   async function ensureModelLayers() {
     const reaches = await ensureReachData();
     // Remove obsolete visual layers from pre-v2.2 styles; flood lines must have
@@ -1685,16 +1774,6 @@
     });
     updateFlowContrastForTheme();
     if (!map.getSource(OBS_SOURCE)) map.addSource(OBS_SOURCE, { type: 'geojson', data: observationGeoJson() });
-    if (!map.getSource(CONTROL_PREVIEW_SOURCE)) map.addSource(CONTROL_PREVIEW_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-    if (!map.getLayer(CONTROL_PREVIEW_CONNECTOR_LAYER)) map.addLayer({ id: CONTROL_PREVIEW_CONNECTOR_LAYER, type: 'line', source: CONTROL_PREVIEW_SOURCE, filter: ['==', ['get', 'kind'], 'connector'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#64748b', 'line-width': 1.5, 'line-dasharray': [2, 2], 'line-opacity': 0.9 } });
-    if (!map.getLayer(CONTROL_PREVIEW_HALO_LAYER)) map.addLayer({ id: CONTROL_PREVIEW_HALO_LAYER, type: 'circle', source: CONTROL_PREVIEW_SOURCE, paint: { 'circle-radius': ['match',['get','kind'],'requested',8,7], 'circle-color': 'rgba(255,255,255,.92)', 'circle-stroke-color': ['match',['get','kind'],'requested','#ffffff','#64748b'], 'circle-stroke-width': 2.2 } });
-    if (!map.getLayer(CONTROL_PREVIEW_POINT_LAYER)) map.addLayer({ id: CONTROL_PREVIEW_POINT_LAYER, type: 'circle', source: CONTROL_PREVIEW_SOURCE, paint: { 'circle-radius': ['match',['get','kind'],'requested',5.7,4.2], 'circle-color': ['match',['get','kind'],'requested','#ffffff','#223468'], 'circle-stroke-color': ['match',['get','kind'],'requested','#64748b','#ffffff'], 'circle-stroke-width': ['match',['get','kind'],'requested',1.7,1.8] } });
-    try {
-      map.setPaintProperty(CONTROL_PREVIEW_POINT_LAYER, 'circle-color', ['match', ['get', 'kind'], 'requested', '#ffffff', '#223468']);
-      map.setPaintProperty(CONTROL_PREVIEW_POINT_LAYER, 'circle-stroke-color', ['match', ['get', 'kind'], 'requested', '#223468', '#ffffff']);
-      map.setPaintProperty(CONTROL_PREVIEW_POINT_LAYER, 'circle-stroke-width', ['match', ['get', 'kind'], 'requested', 1.8, 2.2]);
-      map.moveLayer(CONTROL_PREVIEW_POINT_LAYER);
-    } catch (_) {}
     if (!map.getLayer(OBS_CIRCLE_LAYER)) map.addLayer({
       id: OBS_CIRCLE_LAYER, type: 'circle', source: OBS_SOURCE,
       paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 5, 12, 7.5, 16, 9], 'circle-color': ['get', 'color'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.2 },
@@ -1704,6 +1783,7 @@
       layout: { 'text-field': ['get', 'label'], 'text-size': 10.5, 'text-offset': [0, -1.45], 'text-allow-overlap': false, 'text-ignore-placement': false },
       paint: { 'text-color': '#17243a', 'text-halo-color': '#ffffff', 'text-halo-width': 1.6 },
     });
+    ensureControlPointPreviewLayers();
     // Basin names must stay legible above flood lines, while control points remain on top.
     try { if (map.getLayer('official-basin-label')) map.moveLayer('official-basin-label', CONTROL_PREVIEW_HALO_LAYER); } catch (_) {}
     bindHoverOnce();
@@ -2146,11 +2226,18 @@
 
   async function initialize() {
     initDockedPanels();
+    ensureControlPointPreviewLayers();
     const flowThemeObserver = new MutationObserver(() => updateFlowContrastForTheme());
     flowThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     map.on('zoom', positionAddPointDialog);
     map.on('move', positionAddPointDialog);
     map.on('resize', positionAddPointDialog);
+    map.on('dblclick', () => {
+      cancelScheduledObservationAdd();
+      cancelSnapRequest();
+      clearControlPreviewFeatures();
+      if (state.pendingAddPoint) closeAddPointDialog();
+    });
     try {
       state.info = await fetchJson('/api/hec-routing/info');
       populateScenarioSelect();
@@ -2192,7 +2279,7 @@
       state.observationKey = '';
       refreshObservationComparison(true).catch(() => {});
     });
-    $('acceptModelUnavailable')?.addEventListener('click', () => hideModal('modelUnavailableModal'));
+    $('acceptModelUnavailable')?.addEventListener('click', () => { clearControlPreviewFeatures(); hideModal('modelUnavailableModal'); });
     $('floodAddPointCancelBtn')?.addEventListener('click', closeAddPointDialog);
     $('floodAddPointCancelBottomBtn')?.addEventListener('click', closeAddPointDialog);
     $('floodAddPointCommitBtn')?.addEventListener('click', () => commitPendingAddPoint().catch(() => {}));

@@ -25,6 +25,7 @@ def _feature(geometry, **properties):
 
 
 def _install_runtime(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_BACKEND", "local")
     hms = tmp_path / "data" / "hms"
     model = hms / "Oyo"
     scenario_dir = model / "scenarios"
@@ -283,14 +284,14 @@ def test_flood_routing_restores_previous_five_classes_without_line_animation():
     assert "0.20, 1.0, 0.50, 1.2, 0.85, 1.5" in js
     assert "feature-state', 'falling" in js
     assert "REACH_FALLING_LAYER" in js
-    assert "line-dasharray" not in js
+    assert "REACH_MOTION_LAYER, false" in js
     assert "flowMotion" not in js
     assert "q-baseflow" in html
     assert "q-rising" in html
     assert "q-near-peak" in html
     assert "q-peak" in html
     assert "q-falling" in html
-    assert "Baseflow/Awal" in html
+    assert "Debit awal / rendah" in html
     assert "Rising Limb" in html
     assert "Mendekati Puncak" in html
     assert "Peak Discharge / Puncak" in html
@@ -474,7 +475,7 @@ def test_v221_frontend_state_rules_and_pinned_chart_readouts():
     assert "Maksimal 25 karakter" in js
     assert "width:min(568px" in css
     assert ".flood-right-open .flood-bottom-bar" in css
-    assert "modeledRiverUrl(next)" in spatial
+    assert "fetchRiverAsset(next)" in spatial
     assert "$('autoRiverZoom')?.checked === false ? 'full'" in spatial
 
 
@@ -482,7 +483,7 @@ def test_modeled_river_tiers_generalize_only_clipped_model_network(tmp_path, mon
     _install_runtime(tmp_path, monkeypatch)
     model_rivers = tmp_path / "data" / "hms" / "Oyo" / "model_rivers.geojson"
     _write_json(model_rivers, _fc([
-        _feature({"type": "LineString", "coordinates": [[110.000, -7.000], [110.010, -7.000]]}, model_id="Oyo", river_name="Main", river_order=1),
+        _feature({"type": "LineString", "coordinates": [[110.000, -7.000], [110.010, -7.000]]}, model_id="Oyo", river_name="Kali Main", river_order=1),
         _feature({"type": "LineString", "coordinates": [[110.000, -7.005], [110.010, -7.005]]}, model_id="Oyo", river_name="Trib2", river_order=2),
         _feature({"type": "LineString", "coordinates": [[110.000, -7.010], [110.010, -7.010]]}, model_id="Oyo", river_name="Trib3", river_order=3),
         _feature({"type": "LineString", "coordinates": [[110.000, -7.015], [110.010, -7.015]]}, model_id="Oyo", river_name="Trib4", river_order=4),
@@ -493,6 +494,8 @@ def test_modeled_river_tiers_generalize_only_clipped_model_network(tmp_path, mon
     full = hec_routing.modeled_rivers_geojson("T_0002", "full")
     low_zoom = hec_routing.modeled_rivers_geojson("T_0002", "z6-8")
     assert len(full["features"]) == 4
+    assert full["features"][0]["properties"]["river_name"] == "Main"
+    assert full["features"][0]["properties"]["river_label"] == "K. Main"
     assert {int(f["properties"]["river_order"]) for f in low_zoom["features"]} == {1, 2}
     # No external/national feature can appear: output model ids all come from
     # the already-clipped model_rivers file installed above.
@@ -544,7 +547,7 @@ def test_v221_hover_reuses_popup_and_add_point_follows_map():
     assert "Reuse one popup while crossing reaches" in js
     assert "map.on('mousemove', e =>" in js
     assert "map.on('move', positionAddPointDialog)" in js
-    assert "nameInput.maxLength = 25" in js
+    assert "nameInput.maxLength = MAX_NAME_LENGTH" in js
     assert ".flood-add-point-modal::after{display:none" in css
     assert "Jam ke-${escapeHtml" in js
 
@@ -566,6 +569,7 @@ def test_hms_r2_backend_lazy_download_uses_flood_routing_bucket(tmp_path, monkey
     monkeypatch.setenv("R2_RUNTIME_BUCKET", "flood-routing")
     monkeypatch.setenv("R2_HMS_PREFIX", "")
     monkeypatch.setattr(hms_backend, "_client", lambda: FakeClient())
+    hms_backend._runtime_manifest.cache_clear()
 
     path = hms_backend.ensure_hms_object("index.json")
     assert path.exists()

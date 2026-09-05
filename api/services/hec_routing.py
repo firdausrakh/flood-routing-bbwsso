@@ -215,6 +215,15 @@ def _modeled_rivers_geojson_cached(scenario_id: str | None, tier_key: str) -> di
             f = dict(feature)
             props = dict(f.get("properties") or {})
             props.setdefault("model_id", mid)
+            # Delineasi DTA's layer contract expects river_name to contain only
+            # the base name; the renderer adds the compact "K. " prefix.
+            river_name = str(props.get("river_name") or "").strip()
+            for prefix in ("Kali ", "K. ", "K ", "Sungai ", "S. ", "S "):
+                if river_name.lower().startswith(prefix.lower()):
+                    river_name = river_name[len(prefix):].strip()
+                    break
+            props["river_name"] = river_name or None
+            props["river_label"] = f"K. {river_name}" if river_name else None
             f["properties"] = props
             features.append(f)
 
