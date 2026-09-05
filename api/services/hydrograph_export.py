@@ -49,15 +49,21 @@ def _elapsed_excel_time(index: int, interval: Any) -> float:
     return total_minutes / 1_440.0
 
 
-def _scenario_title(return_period_years: Any, scenario_label: str | None) -> str:
+def _scenario_title(return_period_years: Any, scenario_label: str | None, duration_hours: Any = None) -> str:
     try:
         years = int(float(return_period_years))
     except (TypeError, ValueError):
         years = 0
     if years > 0:
-        return f"Debit Banjir Kala Ulang {years} Tahun"
-    label = str(scenario_label or "").strip()
-    return f"Debit Banjir {label}" if label else "Debit Banjir"
+        title = f"Debit Banjir Kala Ulang {years} Tahun"
+    else:
+        label = str(scenario_label or "").strip()
+        title = f"Debit Banjir {label}" if label else "Debit Banjir"
+    try:
+        duration = int(duration_hours)
+    except (TypeError, ValueError):
+        duration = 0
+    return f"{title} — Hujan {duration} Jam" if duration > 0 else title
 
 
 def hydrograph_filename(
@@ -65,6 +71,7 @@ def hydrograph_filename(
     *,
     return_period_years: Any = None,
     scenario_label: str | None = None,
+    duration_hours: Any = None,
 ) -> str:
     first = str(labels[0] if labels else "Titik Kontrol").strip() or "Titik Kontrol"
     first = first.replace(" - ", " – ")
@@ -76,7 +83,12 @@ def hydrograph_filename(
     except (TypeError, ValueError):
         years = 0
     scenario_text = f"Kala Ulang {years} Tahun" if years > 0 else str(scenario_label or "").strip()
-    prefix = f"Debit Banjir {scenario_text}".strip()
+    try:
+        duration = int(duration_hours)
+    except (TypeError, ValueError):
+        duration = 0
+    duration_text = f" Hujan {duration} Jam" if duration > 0 else ""
+    prefix = f"Debit Banjir {scenario_text}{duration_text}".strip()
     return f"{prefix} {first}{suffix}.xlsx"
 
 
@@ -145,6 +157,7 @@ def build_hydrograph_xlsx(
     *,
     return_period_years: Any = None,
     scenario_label: str | None = None,
+    duration_hours: Any = None,
     sheet_names: list[str] | None = None,
 ) -> bytes:
     points = [item for item in (payload.get("points") or []) if isinstance(item, dict)]
@@ -153,7 +166,7 @@ def build_hydrograph_xlsx(
         str(item.get("label") or item.get("point_id") or f"Titik {idx + 1}").replace(" - ", " – ")
         for idx, item in enumerate(points)
     ]
-    title = _scenario_title(return_period_years, scenario_label)
+    title = _scenario_title(return_period_years, scenario_label, duration_hours)
 
     used_names: set[str] = set()
     names: list[str] = []

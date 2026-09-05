@@ -577,6 +577,10 @@
 
     $('usageInfoBtn')?.addEventListener('click', () => openModal($('usageNoticeModal')));
     $('acceptUsageNotice')?.addEventListener('click', () => { markUsageNoticeSeenThisBrowserSession(); closeModal($('usageNoticeModal')); });
+    // The usage notice remains open behind these reference modals. Closing a
+    // reference therefore returns the user to this acknowledgement first.
+    $('usageNoticeDefinitionBtn')?.addEventListener('click', () => openModal($('definitionModal')));
+    $('usageNoticeMethodologyBtn')?.addEventListener('click', () => openModal($('methodologyModal')));
     $('definitionSidebarBtn')?.addEventListener('click', () => openModal($('definitionModal')));
     $('methodologySidebarBtn')?.addEventListener('click', () => openModal($('methodologyModal')));
     $('closeDefinitionModal')?.addEventListener('click', () => closeModal($('definitionModal')));
@@ -584,10 +588,14 @@
     $('basinSourceBtn')?.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openModal($('basinSourceModal')); });
     $('closeBasinSourceModal')?.addEventListener('click', () => closeModal($('basinSourceModal')));
 
-    document.querySelectorAll('.modal-backdrop').forEach(modal => modal.addEventListener('pointerdown', event => { if (event.target === modal) closeModal(modal); }));
+    document.querySelectorAll('.modal-backdrop').forEach(modal => modal.addEventListener('pointerdown', event => {
+      if (event.target === modal && modal.id !== 'usageNoticeModal') closeModal(modal);
+    }));
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
-      document.querySelectorAll('.modal-backdrop:not(.hidden)').forEach(closeModal);
+      document.querySelectorAll('.modal-backdrop:not(.hidden)').forEach(modal => {
+        if (modal.id !== 'usageNoticeModal') closeModal(modal);
+      });
       $('layerPanel')?.classList.add('hidden');
       if (measureActive) toggleMeasure();
     });
@@ -597,7 +605,7 @@
       if (text) button.title = text;
       button.addEventListener('click', event => { event.preventDefault(); if (text) showToast(text, 5000); });
     });
-    if (!usageNoticeSeenThisBrowserSession()) { markUsageNoticeSeenThisBrowserSession(); openModal($('usageNoticeModal')); }
+    if (!usageNoticeSeenThisBrowserSession()) openModal($('usageNoticeModal'));
   }
 
   let coordReadoutRaf = null;

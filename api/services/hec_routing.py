@@ -44,6 +44,49 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 HMS_DIR = hms_root()
 INDEX_PATH = HMS_DIR / "index.json"
 
+# The available DSS hydrographs represent the six-hour design storm. During
+# preprocessing, each Subbasin's 12 h and 24 h alternatives are generated from
+# DSS FLOW-UNIT GRAPH, PRECIP-EXCESS, and FLOW-BASE records. The resulting
+# Subbasin flows are combined through the basin topology and every Reach is
+# rerouted with its Muskingum-Cunge parameters from the .basin file.
+BASELINE_RAINFALL_DURATION_HOURS = 6
+RAINFALL_DURATIONS_HOURS = (6, 12, 24)
+
+
+def _rainfall_duration_hours(value: Any) -> int:
+    try:
+        duration = int(value)
+    except (TypeError, ValueError):
+        duration = BASELINE_RAINFALL_DURATION_HOURS
+    if duration not in RAINFALL_DURATIONS_HOURS:
+        raise DssReadError("Durasi hujan harus 6, 12, atau 24 jam.")
+    return duration
+
+
+def _duration_series(payload: dict[str, Any], series_key: str, element_id: str, values: list[Any], duration_hours: Any) -> list[float]:
+    duration = _rainfall_duration_hours(duration_hours)
+    if duration == BASELINE_RAINFALL_DURATION_HOURS:
+        return [float(value or 0.0) for value in values or []]
+    duration_keys = {
+        "subbasins": "duration_subbasins",
+        "reaches": "duration_reaches",
+        "reach_inflows": "duration_reach_inflows",
+    }
+    container_key = duration_keys.get(series_key)
+    derived = (((payload.get(container_key) or {}).get(str(duration)) or {}).get(str(element_id))) if container_key else None
+    if derived is None:
+        raise DssReadError(
+            f"Hasil durasi {duration} jam untuk {element_id} belum tersedia. Jalankan preprocessing HMS terbaru."
+        )
+    return [max(0.0, float(value or 0.0)) for value in derived]
+
+
+def _series_peak(values: list[Any]) -> tuple[float, int | None]:
+    if not values:
+        return 0.0, None
+    peak = max(float(value or 0.0) for value in values)
+    return peak, next((index for index, value in enumerate(values) if float(value or 0.0) == peak), None)
+
 
 def _materialize(path: Path) -> Path:
     """Materialize a path relative to the storage-neutral HMS root."""
@@ -298,6 +341,7 @@ def _width_classes(values: list[Any], peak: float) -> list[int]:
 def all_reach_series(
     scenario_id: str | None = None,
     reach_ids: set[str] | None = None,
+    duration_hours: int = BASELINE_RAINFALL_DURATION_HOURS,
 ) -> dict[str, Any]:
     """Return Q(t) for every routing centerline keyed by route_id.
 
@@ -307,6 +351,7 @@ def all_reach_series(
     the Q/Qp styling contract.
     """
     sid = scenario_id or default_scenario_id()
+    duration = _rainfall_duration_hours(duration_hours)
     if not sid:
         raise DssReadError("Belum ada hasil preprocessing kala ulang pada data/hms.")
     times: list[Any] = []
@@ -339,18 +384,22 @@ def all_reach_series(
                 key = f"{mid}:{eid}"
                 if reach_ids is not None and key not in reach_ids:
                     continue
-                routes[key] = vals
-                peaks[key] = float((payload.get(peak_key) or {}).get(eid) or 0.0)
-                peak_indices[key] = (payload.get(index_key) or {}).get(eid)
+                adjusted = _duration_series(payload, series_key, eid, list(vals or []), duration)
+                peak, peak_index = _series_peak(adjusted)
+                routes[key] = adjusted
+                peaks[key] = peak
+                peak_indices[key] = peak_index
                 route_types[key] = kind
-                width_classes[key] = _width_classes(list(vals or []), peaks[key])
+                width_classes[key] = _width_classes(adjusted, peak)
         for eid, vals in (payload.get("reach_inflows") or {}).items():
             key = f"{mid}:{eid}"
             if reach_ids is not None and key not in reach_ids:
                 continue
-            inflows[key] = vals
-            inflow_peaks[key] = float((payload.get("reach_inflow_peaks") or {}).get(eid) or 0.0)
-            inflow_peak_indices[key] = (payload.get("reach_inflow_peak_indices") or {}).get(eid)
+            adjusted = _duration_series(payload, "reach_inflows", eid, list(vals or []), duration)
+            peak, peak_index = _series_peak(adjusted)
+            inflows[key] = adjusted
+            inflow_peaks[key] = peak
+            inflow_peak_indices[key] = peak_index
     if not routes:
         raise DssReadError(f"Hasil routing {sid} belum tersedia.")
     return {
@@ -363,14 +412,17 @@ def all_reach_series(
         "reach_inflows": inflows, "reach_inflow_peaks": inflow_peaks,
         "reach_inflow_peak_indices": inflow_peak_indices,
         "route_types": route_types, "source": "precomputed_hms",
+        "rainfall_duration_hours": duration,
+        "baseline_rainfall_duration_hours": BASELINE_RAINFALL_DURATION_HOURS,
+        "duration_derivation": "unit_graph_convolution_and_muskingum_cunge_rerouting" if duration != BASELINE_RAINFALL_DURATION_HOURS else "dss_baseline",
     }
 
 
-def selected_reach_series(reach_ids: list[str] | None = None, scenario_id: str | None = None) -> dict[str, Any]:
+def selected_reach_series(reach_ids: list[str] | None = None, scenario_id: str | None = None, duration_hours: int = BASELINE_RAINFALL_DURATION_HOURS) -> dict[str, Any]:
     if not reach_ids:
-        return all_reach_series(scenario_id)
+        return all_reach_series(scenario_id, duration_hours=duration_hours)
     wanted = {str(x).strip() for x in reach_ids if str(x).strip()}
-    payload = all_reach_series(scenario_id, wanted)
+    payload = all_reach_series(scenario_id, wanted, duration_hours)
     # The map derives its visual state from Q/Qp and does not consume the
     # parallel integer arrays. Keep them only on the legacy all-series response.
     payload.pop("reach_width_classes", None)
@@ -391,6 +443,10 @@ def routing_info() -> dict[str, Any]:
             "models": [{"id": str(x["id"]), "name": x.get("name") or x["id"]} for x in _models()],
             "reach_count": len(reaches_geojson().get("features", [])), "route_count": len(reaches_geojson().get("features", [])), "scenarios": scenarios,
             "default_scenario": default_scenario_id(), "series_ready": bool(scenarios),
+            "rainfall_durations_hours": [6, 12, 24], "default_rainfall_duration_hours": 12,
+            "baseline_rainfall_duration_hours": BASELINE_RAINFALL_DURATION_HOURS,
+            "duration_method": "unit_graph_convolution_and_muskingum_cunge_rerouting",
+            "routed_duration_method": "muskingum_cunge_rerouting_from_basin_parameters",
             "raw_source_read_at_runtime": False, "spatial_role": "reach2d_reach_and_subbasin_centerlines",
             "data_backend": hms_backend_name(), "storage_metrics": hms_backend_metrics()}
 
@@ -723,8 +779,9 @@ def _routing_selection(points: list[dict[str, Any]]) -> dict[str, Any]:
         "route_ids": route_ids,
     }
 
-def observe_points(point_specs: list[dict[str, Any]], radius_m: float = DEFAULT_SNAP_RADIUS_M, scenario_id: str | None = None) -> dict[str, Any]:
+def observe_points(point_specs: list[dict[str, Any]], radius_m: float = DEFAULT_SNAP_RADIUS_M, scenario_id: str | None = None, duration_hours: int = BASELINE_RAINFALL_DURATION_HOURS) -> dict[str, Any]:
     sid = scenario_id or default_scenario_id()
+    duration = _rainfall_duration_hours(duration_hours)
     if not sid:
         raise DssReadError("Belum ada kala ulang hasil preprocessing.")
     snapped = snap_points(point_specs, radius_m, sid); points = snapped["points"]
@@ -732,20 +789,33 @@ def observe_points(point_specs: list[dict[str, Any]], radius_m: float = DEFAULT_
     for item in points:
         try: vals, payload = _series(item, sid)
         except DssReadError: vals, payload = [], {}
+        series_type = str(item.get("series_type") or "")
+        series_key = "reach_inflows" if series_type == "reach_inflow" else ("subbasins" if series_type == "subbasin" else "reaches")
+        vals = _duration_series(payload, series_key, str(item.get("series_id") or ""), vals, duration)
         item["series"] = vals
         if item.get("series_type") == "reach_inflow":
-            item["series_derivation"] = (payload.get("reach_inflow_modes") or {}).get(str(item.get("series_id"))) or "missing_dss_flow_combine"
+            base_derivation = (payload.get("reach_inflow_modes") or {}).get(str(item.get("series_id"))) or "missing_dss_flow_combine"
+            item["series_derivation"] = (
+                "topology_combination_after_subbasin_convolution"
+                if duration != BASELINE_RAINFALL_DURATION_HOURS and base_derivation != "missing_dss_flow_combine"
+                else base_derivation
+            )
             item["series_source_elements"] = list((payload.get("reach_inflow_sources") or {}).get(str(item.get("series_id"))) or [])
             item["dss_parameter"] = "FLOW-COMBINE"
         elif item.get("series_type") == "reach_outflow":
-            item["series_derivation"] = "dss_flow_outflow"
+            item["series_derivation"] = (
+                "muskingum_cunge_rerouting"
+                if duration != BASELINE_RAINFALL_DURATION_HOURS
+                else "dss_flow_outflow"
+            )
             item["dss_parameter"] = "FLOW"
         elif item.get("series_type") == "subbasin":
-            item["series_derivation"] = "dss_subbasin_flow"
+            item["series_derivation"] = "dss_unit_graph_convolution" if duration != BASELINE_RAINFALL_DURATION_HOURS else "dss_subbasin_flow"
             item["dss_parameter"] = "FLOW"
-        if len(payload.get("times") or []) > len(times):
-            times = list(payload.get("times") or []); interval = str(payload.get("interval") or interval); units = str(payload.get("units") or units)
-        item.update(_metrics(vals, list(payload.get("times") or times), payload.get("interval") or interval))
+        payload_times = list(payload.get("times") or [])
+        if len(payload_times) > len(times):
+            times = payload_times; interval = str(payload.get("interval") or interval); units = str(payload.get("units") or units)
+        item.update(_metrics(vals, payload_times or times, payload.get("interval") or interval))
 
     # Build links from each selected point to its nearest selected downstream
     # neighbour. This makes the result independent of click order and naturally
@@ -788,4 +858,7 @@ def observe_points(point_specs: list[dict[str, Any]], radius_m: float = DEFAULT_
         "points": points, "errors": snapped.get("errors", []), "segments": segments,
         "routing_selection": routing_selection,
         "point_count": len(points), "source": "precomputed_hms",
+        "rainfall_duration_hours": duration,
+        "baseline_rainfall_duration_hours": BASELINE_RAINFALL_DURATION_HOURS,
+        "duration_derivation": "unit_graph_convolution_and_muskingum_cunge_rerouting" if duration != BASELINE_RAINFALL_DURATION_HOURS else "dss_baseline",
     }

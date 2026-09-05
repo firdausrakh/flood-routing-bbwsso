@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
 TEMPLATES_DIR = ROOT_DIR / "templates"
-SHELL_VERSION = "1.0.1.0"
+SHELL_VERSION = "1.0.2.0"
 
 
 def _load_project_dotenv_lightweight() -> None:

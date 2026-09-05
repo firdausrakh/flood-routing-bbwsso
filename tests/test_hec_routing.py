@@ -8,7 +8,7 @@ import geopandas as gpd
 from shapely.geometry import Polygon
 
 from api.services import hec_routing
-from scripts.preprocess_hms import modeled_area, parse_basin
+from scripts.preprocess_hms import convolved_duration_flow, modeled_area, muskingum_cunge_route, parse_basin
 
 
 def _write_json(path: Path, payload):
@@ -78,6 +78,18 @@ def _install_runtime(tmp_path, monkeypatch):
         "subbasins": {"S1": [0.0, 4.0, 8.0]},
         "subbasin_peaks": {"S1": 8.0},
         "subbasin_peak_indices": {"S1": 2},
+        "duration_subbasins": {
+            "12": {"S1": [0.0, 2.0, 4.0]},
+            "24": {"S1": [0.0, 1.0, 2.0]},
+        },
+        "duration_reaches": {
+            "12": {"R1": [0.5, 5.0, 2.5]},
+            "24": {"R1": [0.25, 2.5, 1.25]},
+        },
+        "duration_reach_inflows": {
+            "12": {"R1": [0.25, 4.0, 2.0]},
+            "24": {"R1": [0.125, 2.0, 1.0]},
+        },
         "junctions": {},
         "junction_peaks": {},
     }
@@ -134,6 +146,26 @@ def test_modeled_area_repairs_invalid_subbasin_geometry():
     assert len(area) == 1
     assert not area.geometry.iloc[0].is_empty
     assert area.geometry.iloc[0].is_valid
+
+
+def test_duration_convolution_stretches_rainfall_and_preserves_depth():
+    twelve_hours = convolved_duration_flow([2.0, 0.0], [1.0, 0.5], [0.0], 12, 3)
+    twenty_four_hours = convolved_duration_flow([2.0, 0.0], [1.0, 0.5], [0.0], 24, 5)
+
+    assert twelve_hours == [1.0, 1.5, 0.5]
+    assert twenty_four_hours == [0.5, 0.75, 0.75, 0.75, 0.25]
+
+
+def test_muskingum_cunge_preserves_steady_flow_without_calibration():
+    routing = {
+        "method": "Muskingum Cunge", "channel": "Trapezoid",
+        "index_parameter_type": "Index Celerity", "index_celerity_mps": 1.52,
+        "energy_slope": 0.01, "mannings_n": 0.05,
+        "bottom_width_m": 10.0, "side_slope": 3.0,
+    }
+    routed = muskingum_cunge_route([25.0] * 12, routing, 1_000.0, 5)
+
+    assert all(abs(value - 25.0) < 1e-9 for value in routed)
 
 
 def test_runtime_exposes_reach_and_subbasin_routing_series(tmp_path, monkeypatch):
@@ -195,6 +227,18 @@ def test_subbasin_reach2d_route_uses_subbasin_flow(tmp_path, monkeypatch):
     assert point["series"] == [0.0, 4.0, 8.0]
     assert point["peak_q"] == 8.0
     assert point["peak_index"] == 2
+
+
+def test_subbasin_duration_uses_precomputed_unit_graph_convolution(tmp_path, monkeypatch):
+    _install_runtime(tmp_path, monkeypatch)
+    payload = hec_routing.observe_points([
+        {"point_id": "P1", "label": "Hulu", "lon": 110.005, "lat": -7.0099},
+    ], radius_m=300, scenario_id="T_0002", duration_hours=12)
+    point = payload["points"][0]
+
+    assert point["series"][:3] == [0.0, 2.0, 4.0]
+    assert point["peak_q"] == 4.0
+    assert point["series_derivation"] == "dss_unit_graph_convolution"
 
 
 def test_snap_returns_distinct_modeled_area_and_radius_errors(tmp_path, monkeypatch):
@@ -409,6 +453,9 @@ def test_extract_dss_reads_flow_combine_from_same_reach_for_reach_inflow(tmp_pat
         "//R1/FLOW-COMBINE//5Minute/RUN:T=0002/": [0.5, 8.0, 4.0],
         "//S1/FLOW//5Minute/RUN:T=0002/": [0.0, 4.0, 8.0],
         "//J1/FLOW//5Minute/RUN:T=0002/": [0.25, 6.0, 3.0],
+        "//S1/FLOW-UNIT GRAPH/TS-PATTERN/5Minute/RUN:T=0002/": [1.0, 0.5],
+        "//S1/PRECIP-EXCESS//5Minute/RUN:T=0002/": [2.0, 0.0, 0.0],
+        "//S1/FLOW-BASE//5Minute/RUN:T=0002/": [0.0, 0.0, 0.0],
     }
 
     class FakeFile:
@@ -434,7 +481,14 @@ def test_extract_dss_reads_flow_combine_from_same_reach_for_reach_inflow(tmp_pat
     monkeypatch.setattr(preprocess_hms, "dss_meta", fake_meta)
     topo = {
         "nodes": {
-            "R1": {"type": "reach", "upstream": ["J1"]},
+            "R1": {
+                "type": "reach", "upstream": ["J1"], "length_m": 456.0,
+                "routing": {
+                    "energy_slope": 0.01, "mannings_n": 0.05,
+                    "bottom_width_m": 10.0, "side_slope": 3.0,
+                    "index_celerity_mps": 1.52,
+                },
+            },
             "S1": {"type": "subbasin", "upstream": []},
             "J1": {"type": "junction", "upstream": ["S1"]},
         }

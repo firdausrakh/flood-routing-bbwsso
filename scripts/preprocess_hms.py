@@ -66,6 +66,21 @@ def parse_basin(path: Path) -> dict[str, Any]:
         for src,dst in [("Canvas X","canvas_x"),("Canvas Y","canvas_y"),("From Canvas X","from_canvas_x"),("From Canvas Y","from_canvas_y"),("Latitude Degrees","lat"),("Longitude Degrees","lon"),("Length","length_m"),("Area","area_km2")]:
             try: n[dst] = float(a[src]) if src in a else None
             except Exception: n[dst] = None
+        if n["type"] == "reach":
+            n["routing"] = {
+                "method": a.get("Route"),
+                "channel": a.get("Channel"),
+                "initial_variable": a.get("Initial Variable"),
+                "space_time_method": a.get("Space-Time Method"),
+                "index_parameter_type": a.get("Index Parameter Type"),
+            }
+            for src,dst in (
+                ("Energy Slope","energy_slope"), ("Mannings n","mannings_n"),
+                ("Bottom Width","bottom_width_m"), ("Side Slope","side_slope"),
+                ("Index Celerity","index_celerity_mps"), ("Number Subreaches","number_subreaches"),
+            ):
+                try: n["routing"][dst] = float(a[src]) if src in a else None
+                except Exception: n["routing"][dst] = None
     upstream = defaultdict(list); edges=[]
     for n in nodes.values():
         if n.get("downstream"): upstream[n["downstream"]].append(n["id"]); edges.append({"from":n["id"],"to":n["downstream"]})
@@ -461,6 +476,113 @@ def times_of(ts,n):
         except Exception: pass
     return [str(i) for i in range(n)]
 
+def convolved_duration_flow(excess,unit_graph,baseflow,duration_hours,target_length):
+    """Convolve a stretched excess-rainfall hyetograph with the HMS unit graph."""
+    blocks=max(1,int(duration_hours)//6)
+    excess=np.nan_to_num(np.asarray(excess,dtype=float).reshape(-1),nan=0.0,posinf=0.0,neginf=0.0)
+    unit_graph=np.nan_to_num(np.asarray(unit_graph,dtype=float).reshape(-1),nan=0.0,posinf=0.0,neginf=0.0)
+    baseflow=np.nan_to_num(np.asarray(baseflow,dtype=float).reshape(-1),nan=0.0,posinf=0.0,neginf=0.0)
+    nonzero=np.flatnonzero(np.abs(excess)>1e-12)
+    active=excess[:int(nonzero[-1])+1] if len(nonzero) else excess[:1]
+    stretched=np.repeat(active/blocks,blocks)
+    direct=np.convolve(stretched,unit_graph) if len(unit_graph) else np.zeros(0,dtype=float)
+    size=max(int(target_length),len(direct),1)
+    if len(baseflow):
+        base=np.pad(baseflow,(0,max(0,size-len(baseflow))),mode="edge")[:size]
+    else:
+        base=np.zeros(size,dtype=float)
+    routed=np.zeros(size,dtype=float); routed[:min(size,len(direct))]=direct[:size]
+    return np.maximum(0.0,routed+base).tolist()
+
+def _trapezoid_properties(discharge,bottom_width,side_slope,energy_slope,mannings_n):
+    """Return water-surface width and dQ/dA for a Manning trapezoid."""
+    q=max(float(discharge),1e-9); b=max(float(bottom_width),1e-6); z=max(float(side_slope),0.0)
+    slope=max(float(energy_slope),1e-12); roughness=max(float(mannings_n),1e-6)
+    wall=math.sqrt(1.0+z*z)
+    def section(depth):
+        y=max(float(depth),1e-12); area=y*(b+z*y); perimeter=b+2.0*y*wall
+        flow=(area*(area/perimeter)**(2.0/3.0)*math.sqrt(slope))/roughness
+        return area,flow
+    lo,hi=0.0,1.0
+    while section(hi)[1] < q and hi < 1e6: hi*=2.0
+    for _ in range(45):
+        mid=(lo+hi)/2.0
+        if section(mid)[1] < q: lo=mid
+        else: hi=mid
+    depth=(lo+hi)/2.0; delta=max(1e-5,depth*1e-4)
+    y0=max(1e-9,depth-delta); y1=depth+delta
+    a0,q0=section(y0); a1,q1=section(y1)
+    celerity=max((q1-q0)/max(a1-a0,1e-12),1e-6)
+    return b+2.0*z*depth,celerity
+
+def muskingum_cunge_route(inflow,routing,length_m,interval_minutes=5):
+    """Route one reach using the variable-coefficient HEC-HMS equations."""
+    values=np.nan_to_num(np.asarray(inflow,dtype=float).reshape(-1),nan=0.0,posinf=0.0,neginf=0.0)
+    if len(values)<2: return np.maximum(values,0.0).tolist()
+    length=max(float(length_m or 0.0),0.0); user_dt=max(float(interval_minutes)*60.0,1.0)
+    method=str(routing.get("method") or "Muskingum Cunge").strip().lower()
+    channel=str(routing.get("channel") or "Trapezoid").strip().lower()
+    index_type=str(routing.get("index_parameter_type") or "Index Celerity").strip().lower()
+    if "muskingum cunge" not in method or channel != "trapezoid" or "celerity" not in index_type:
+        raise ValueError(f"Konfigurasi routing belum didukung: method={method}, channel={channel}, index={index_type}")
+    try:
+        slope=float(routing["energy_slope"]); roughness=float(routing["mannings_n"])
+        bottom=float(routing["bottom_width_m"]); side=float(routing["side_slope"])
+        index_celerity=float(routing["index_celerity_mps"])
+    except (KeyError,TypeError,ValueError):
+        raise ValueError("Parameter Muskingum-Cunge tidak lengkap")
+    if length<=0 or min(slope,roughness,bottom,index_celerity)<=0: raise ValueError("Parameter Muskingum-Cunge tidak valid")
+    travel_time=length/index_celerity
+    substeps=max(1,int(math.ceil(user_dt/max(travel_time,1e-9))))
+    dt=user_dt/substeps
+    cells=max(1,int(math.ceil(length/(index_celerity*dt))))
+    dx=length/cells
+    fine_count=(len(values)-1)*substeps+1
+    fine_x=np.arange(fine_count,dtype=float)/substeps
+    current=np.interp(fine_x,np.arange(len(values),dtype=float),values)
+    for _ in range(cells):
+        out=np.empty_like(current); out[0]=current[0]
+        for t in range(1,len(current)):
+            reference=max((current[t-1]+current[t]+out[t-1])/3.0,1e-9)
+            width,celerity=_trapezoid_properties(reference,bottom,side,slope,roughness)
+            k=dx/celerity
+            x=0.5*(1.0-reference/(width*slope*celerity*dx))
+            ratio=dt/k; denominator=ratio+2.0*(1.0-x)
+            c1=(ratio+2.0*x)/denominator
+            c2=(ratio-2.0*x)/denominator
+            c3=(2.0*(1.0-x)-ratio)/denominator
+            out[t]=max(0.0,c1*current[t-1]+c2*current[t]+c3*out[t-1])
+        current=out
+    return current[::substeps][:len(values)].tolist()
+
+def route_duration_network(topo,subbasin_flows,interval_minutes=5):
+    """Combine all upstream elements and route every reach in topological order."""
+    nodes=topo.get("nodes") or {}; memo={}; reach_inflows={}; reach_outflows={}
+    target=max((len(v) for v in subbasin_flows.values()),default=0)
+    def normalized(values):
+        arr=np.nan_to_num(np.asarray(values,dtype=float).reshape(-1),nan=0.0,posinf=0.0,neginf=0.0)
+        return np.pad(arr,(0,max(0,target-len(arr))),mode="edge")[:target] if len(arr) else np.zeros(target,dtype=float)
+    def output(element_id,trail=()):
+        if element_id in memo: return memo[element_id]
+        if element_id in trail: raise ValueError(f"Siklus topologi pada {element_id}")
+        node=nodes.get(element_id) or {}; kind=node.get("type")
+        if kind=="subbasin": result=normalized(subbasin_flows.get(element_id,[]))
+        else:
+            upstream=[output(uid,trail+(element_id,)) for uid in node.get("upstream",[]) if uid in nodes]
+            combined=np.sum(upstream,axis=0) if upstream else np.zeros(target,dtype=float)
+            if kind=="reach":
+                reach_inflows[element_id]=combined.tolist()
+                result=np.asarray(muskingum_cunge_route(combined,node.get("routing") or {},node.get("length_m"),interval_minutes),dtype=float)
+                reach_outflows[element_id]=result.tolist()
+            else: result=combined
+        memo[element_id]=result; return result
+    for eid in nodes: output(eid)
+    return reach_inflows,reach_outflows
+
+def interval_minutes(value):
+    match=re.search(r"([0-9]+)",str(value or ""))
+    return max(1,int(match.group(1))) if match else 5
+
 def extract_dss(path,topo):
     out_meta=dss_meta(path,"FLOW")
     in_meta=dss_meta(path,"FLOW-COMBINE")
@@ -470,9 +592,10 @@ def extract_dss(path,topo):
     out_avail=set(out_meta["elements"]); in_avail=set(in_meta["elements"])
     Open=pydss_open()
 
-    raw_out={}; raw_combine={}
+    raw_out={}; raw_combine={}; raw_convolution={}
     wanted=sorted(topo["nodes"].keys())
     reach_ids=sorted(eid for eid,n in topo["nodes"].items() if n["type"]=="reach")
+    subbasin_ids=sorted(eid for eid,n in topo["nodes"].items() if n["type"]=="subbasin")
     with Open(path,mode="r") as fid:
         for eid in wanted:
             if out_meta.get("available") and eid not in out_avail: continue
@@ -488,6 +611,21 @@ def extract_dss(path,topo):
             except Exception: continue
             vals=[clean(v) for v in np.asarray(getattr(ts,"values",[]),dtype=float).reshape(-1).tolist()]
             if vals: raw_combine[rid]={"times":times_of(ts,len(vals)),"values":vals}
+        # HMS stores the SCS unit graph, effective-rainfall hyetograph, and
+        # baseflow for every Subbasin. These records allow 12 h and 24 h
+        # alternatives to be generated by true discrete convolution.
+        for eid in subbasin_ids:
+            try:
+                uh=fid.read_ts(f"//{eid}/FLOW-UNIT GRAPH/TS-PATTERN/{interval}/{version}/",trim_missing=True,reg=True,value_precision="float")
+                pe=fid.read_ts(f"//{eid}/PRECIP-EXCESS//{interval}/{version}/",trim_missing=True,reg=True,value_precision="float")
+                bf=fid.read_ts(f"//{eid}/FLOW-BASE//{interval}/{version}/",trim_missing=True,reg=True,value_precision="float")
+                raw_convolution[eid]={
+                    "unit_graph":np.asarray(getattr(uh,"values",[]),dtype=float).reshape(-1),
+                    "precip_excess":np.asarray(getattr(pe,"values",[]),dtype=float).reshape(-1),
+                    "baseflow":np.asarray(getattr(bf,"values",[]),dtype=float).reshape(-1),
+                }
+            except Exception:
+                continue
 
     items=list(raw_out.values())+list(raw_combine.values())
     if not items: raise RuntimeError(f"Tidak ada FLOW/FLOW-COMBINE yang terbaca dari {path.name}")
@@ -501,6 +639,43 @@ def extract_dss(path,topo):
             aligned[eid]=arr
         return aligned
     aligned=align(raw_out); aligned_combine=align(raw_combine)
+
+    duration_subbasins={"12":{},"24":{}}
+    duration_subbasin_peaks={"12":{},"24":{}}
+    duration_subbasin_peak_indices={"12":{},"24":{}}
+    missing_convolution=sorted(set(subbasin_ids)-set(raw_convolution))
+    if missing_convolution:
+        raise RuntimeError(
+            f"Record FLOW-UNIT GRAPH/PRECIP-EXCESS/FLOW-BASE tidak lengkap untuk {len(missing_convolution)} Subbasin: {missing_convolution[:8]}"
+        )
+    for eid,component in raw_convolution.items():
+        for duration in (12,24):
+            arr=convolved_duration_flow(
+                component["precip_excess"],component["unit_graph"],component["baseflow"],duration,len(axis)
+            )
+            peak=max(arr) if arr else 0.0
+            duration_subbasins[str(duration)][eid]=arr
+            duration_subbasin_peaks[str(duration)][eid]=peak
+            duration_subbasin_peak_indices[str(duration)][eid]=arr.index(peak) if arr else None
+
+    duration_reaches={"12":{},"24":{}}
+    duration_reach_peaks={"12":{},"24":{}}
+    duration_reach_peak_indices={"12":{},"24":{}}
+    duration_reach_inflows={"12":{},"24":{}}
+    duration_reach_inflow_peaks={"12":{},"24":{}}
+    duration_reach_inflow_peak_indices={"12":{},"24":{}}
+    for duration in (12,24):
+        inflows,outflows=route_duration_network(topo,duration_subbasins[str(duration)],interval_minutes(interval))
+        for eid,arr in inflows.items():
+            peak=max(arr) if arr else 0.0
+            duration_reach_inflows[str(duration)][eid]=arr
+            duration_reach_inflow_peaks[str(duration)][eid]=peak
+            duration_reach_inflow_peak_indices[str(duration)][eid]=arr.index(peak) if arr else None
+        for eid,arr in outflows.items():
+            peak=max(arr) if arr else 0.0
+            duration_reaches[str(duration)][eid]=arr
+            duration_reach_peaks[str(duration)][eid]=peak
+            duration_reach_peak_indices[str(duration)][eid]=arr.index(peak) if arr else None
 
     def group(kind):
         rows={eid:aligned[eid] for eid,n in topo["nodes"].items() if n["type"]==kind and eid in aligned}
@@ -529,6 +704,17 @@ def extract_dss(path,topo):
             "reaches":r,"reach_peaks":rpks,"reach_peak_indices":ridx,
             "reach_inflows":reach_inflows,"reach_inflow_peaks":reach_inflow_peaks,"reach_inflow_peak_indices":reach_inflow_peak_indices,"reach_inflow_sources":reach_inflow_sources,"reach_inflow_modes":reach_inflow_modes,
             "subbasins":s,"subbasin_peaks":spks,"subbasin_peak_indices":sidx,
+            "duration_subbasins":duration_subbasins,
+            "duration_subbasin_peaks":duration_subbasin_peaks,
+            "duration_subbasin_peak_indices":duration_subbasin_peak_indices,
+            "duration_reaches":duration_reaches,
+            "duration_reach_peaks":duration_reach_peaks,
+            "duration_reach_peak_indices":duration_reach_peak_indices,
+            "duration_reach_inflows":duration_reach_inflows,
+            "duration_reach_inflow_peaks":duration_reach_inflow_peaks,
+            "duration_reach_inflow_peak_indices":duration_reach_inflow_peak_indices,
+            "duration_method":"unit_graph_convolution_and_muskingum_cunge_rerouting",
+            "baseline_rainfall_duration_hours":6,
             "junctions":j,"junction_peaks":jpks,"junction_peak_indices":jidx}
 
 def gz(payload,path):

@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import geopandas as gpd
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -59,7 +59,7 @@ TEMPLATES_DIR = ROOT_DIR / "templates"
 
 CRS_WEB = "EPSG:4326"
 CRS_AREA = "ESRI:54034"
-APP_VERSION = "1.0.1.0"
+APP_VERSION = "1.0.2.0"
 DEFAULT_RIVER_SEARCH_RADIUS_M = 300.0
 TOPONYM_NAMING_RADIUS_M = 5_000.0
 TOPONYM_SETTLEMENT_PRIORITY = {
@@ -89,6 +89,7 @@ class HecObservationPoint(BaseModel):
 class HecObservationRequest(BaseModel):
     points: list[HecObservationPoint] = Field(default_factory=list, max_length=10)
     scenario: str | None = None
+    duration_hours: Literal[6, 12, 24] = 12
     snap_radius_m: float = Field(DEFAULT_RIVER_SEARCH_RADIUS_M, gt=0, le=20_000)
     # The add-point interaction needs both the routing snap and its display
     # identity.  Keeping this opt-in avoids changing the response used by
@@ -99,6 +100,7 @@ class HecObservationRequest(BaseModel):
 class HecSeriesRequest(BaseModel):
     reach_ids: list[str] = Field(default_factory=list, max_length=1000)
     scenario: str | None = None
+    duration_hours: Literal[6, 12, 24] = 12
 
 
 # Reference layers are used only for cartography and automatic naming.
@@ -643,10 +645,14 @@ def hec_routing_modeled_area(scenario: str | None = Query(default=None)):
 
 
 @app.get("/api/hec-routing/series")
-def hec_routing_series(reach_ids: str | None = Query(default=None), scenario: str | None = Query(default=None)):
+def hec_routing_series(
+    reach_ids: str | None = Query(default=None),
+    scenario: str | None = Query(default=None),
+    duration_hours: Literal[6, 12, 24] = Query(default=12),
+):
     selected = [item.strip() for item in (reach_ids or "").split(",") if item.strip()]
     try:
-        return selected_reach_series(selected or None, scenario)
+        return selected_reach_series(selected or None, scenario, duration_hours)
     except DssParserUnavailable as exc:
         raise HTTPException(status_code=503, detail={"code": "dss_parser_unavailable", "message": str(exc)}) from exc
     except DssReadError as exc:
@@ -656,7 +662,7 @@ def hec_routing_series(reach_ids: str | None = Query(default=None), scenario: st
 @app.post("/api/hec-routing/series")
 def hec_routing_series_post(payload: HecSeriesRequest):
     try:
-        return selected_reach_series(payload.reach_ids or None, payload.scenario)
+        return selected_reach_series(payload.reach_ids or None, payload.scenario, payload.duration_hours)
     except DssParserUnavailable as exc:
         raise HTTPException(status_code=503, detail={"code": "dss_parser_unavailable", "message": str(exc)}) from exc
     except DssReadError as exc:
@@ -699,7 +705,12 @@ def hec_routing_export_hydrograph_xlsx(payload: HecObservationRequest):
     if not payload.points:
         raise HTTPException(status_code=400, detail={"code": "no_control_points", "message": "Tambahkan minimal satu Titik Kontrol sebelum mengunduh hidrograf."})
     try:
-        result = hec_observe_points([item.model_dump() for item in payload.points], radius_m=payload.snap_radius_m, scenario_id=payload.scenario)
+        result = hec_observe_points(
+            [item.model_dump() for item in payload.points],
+            radius_m=payload.snap_radius_m,
+            scenario_id=payload.scenario,
+            duration_hours=payload.duration_hours,
+        )
     except DssParserUnavailable as exc:
         raise HTTPException(status_code=503, detail={"code": "dss_parser_unavailable", "message": str(exc)}) from exc
     except DssReadError as exc:
@@ -713,12 +724,14 @@ def hec_routing_export_hydrograph_xlsx(payload: HecObservationRequest):
         result,
         return_period_years=scenario_meta.get("return_period_years"),
         scenario_label=scenario_meta.get("label") or result.get("scenario"),
+        duration_hours=payload.duration_hours,
         sheet_names=sheet_names,
     )
     filename = hydrograph_filename(
         labels,
         return_period_years=scenario_meta.get("return_period_years"),
         scenario_label=scenario_meta.get("label") or result.get("scenario"),
+        duration_hours=payload.duration_hours,
     )
     encoded = urllib.parse.quote(filename, safe="")
     return Response(
@@ -734,7 +747,12 @@ def hec_routing_export_hydrograph_xlsx(payload: HecObservationRequest):
 @app.post("/api/hec-routing/observe")
 def hec_routing_observe(payload: HecObservationRequest):
     try:
-        return hec_observe_points([item.model_dump() for item in payload.points], radius_m=payload.snap_radius_m, scenario_id=payload.scenario)
+        return hec_observe_points(
+            [item.model_dump() for item in payload.points],
+            radius_m=payload.snap_radius_m,
+            scenario_id=payload.scenario,
+            duration_hours=payload.duration_hours,
+        )
     except DssParserUnavailable as exc:
         raise HTTPException(status_code=503, detail={"code": "dss_parser_unavailable", "message": str(exc)}) from exc
     except DssReadError as exc:

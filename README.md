@@ -1,10 +1,19 @@
-# Penelusuran Banjir — Versi 1.0.1.0
+# Penelusuran Banjir — Versi 1.0.2.0
 
 WebGIS untuk membaca dan menelusuri hasil simulasi banjir HEC-HMS pada jaringan sungai. Aplikasi membantu pengguna melihat hidrograf, debit puncak, waktu puncak, hubungan hulu–hilir, serta perubahan aliran pada beberapa skenario model.
 
 Aplikasi ini merupakan **viewer hasil model**, bukan mesin simulasi hidrologi yang menghitung ulang hujan-limpasan atau routing di browser. Data HEC-HMS diproses terlebih dahulu menjadi data ringan yang siap dibaca oleh web.
 
 ## Riwayat versi
+
+### 1.0.2.0 — Durasi hujan dan routing ulang Muskingum–Cunge
+
+- Ditambahkan pilihan durasi hujan **6 jam — Agresif**, **12 jam — Moderat** sebagai default, dan **24 jam — Konservatif**.
+- Durasi 6 jam tetap menggunakan hidrograf hasil DSS sebagai basis.
+- Durasi 12 dan 24 jam dihitung dari `PRECIP-EXCESS`, `FLOW-UNIT GRAPH`, dan `FLOW-BASE` pada DSS melalui konvolusi diskret tanpa faktor kalibrasi.
+- Debit hasil konvolusi seluruh sub-DAS digabungkan mengikuti topologi `.basin` dan dirouting ulang pada setiap Reach dengan parameter Muskingum–Cunge dari `.basin`.
+- Ditambahkan metadata derivasi durasi dan validasi konfigurasi routing agar dataset dengan metode atau geometri yang belum didukung tidak dihitung secara diam-diam.
+- Hidrograf ekspor `.xlsx` mencantumkan durasi hujan pada judul dan nama berkas.
 
 ### 1.0.1.0 — Pembaruan metodologi dan dokumentasi
 
@@ -69,7 +78,7 @@ Metode yang digunakan mengikuti konfigurasi masing-masing Basin Model HEC-HMS. P
 
 Parameter tidak dianggap sebagai satu nilai yang mewakili seluruh DAS. Nilai parameter dapat berbeda antar-sub-DAS dan antar-reach sesuai model sumber.
 
-Preprocessing hanya mengubah format dan struktur penyimpanan agar efisien untuk web. Preprocessing tidak mengganti metode atau menghitung ulang hasil hidrologi HEC-HMS.
+Untuk durasi dasar 6 jam, preprocessing hanya mengubah format dan struktur penyimpanan hasil HEC-HMS. Untuk pilihan 12 dan 24 jam, preprocessing memperpanjang hujan efektif dengan total tetap, melakukan konvolusi dengan unit hydrograph setiap sub-DAS, menambahkan baseflow DSS, kemudian merouting ulang seluruh jaringan memakai parameter Muskingum–Cunge dari berkas `.basin`. Tidak digunakan faktor kalibrasi.
 
 ## Sumber dan kontrak data
 
@@ -168,7 +177,10 @@ orientasi centerline upstream → downstream
   ↓
 penyusunan GeoJSON dan metadata runtime
 .dss
-  ↓ membaca FLOW, FLOW-COMBINE, dan seri Subbasin
+  ↓ membaca FLOW, FLOW-COMBINE, FLOW-UNIT GRAPH, PRECIP-EXCESS, dan FLOW-BASE
+konvolusi Subbasin untuk durasi 12/24 jam
+  ↓
+penggabungan topologi dan routing ulang Muskingum–Cunge setiap Reach
   ↓
 data/hms/<model>
 ```
@@ -341,4 +353,4 @@ Periksa lisensi setiap data spasial, library, dan sumber model sebelum distribus
 
 ---
 
-**Rilis:** `1.0.1.0`
+**Rilis:** `1.0.2.0`

@@ -82,9 +82,9 @@ def main() -> int:
     if toponym.exists():
         toponym_key = os.getenv("R2_TOPONYM_KEY", "reference/toponim.sqlite").strip() or "reference/toponim.sqlite"
         toponym_bucket = os.getenv("R2_TOPONYM_BUCKET", bucket).strip() or bucket
-        print(f"[UPLOAD] reference/toponim.sqlite -> r2://{toponym_bucket}/{topononym_key}")
+        print(f"[UPLOAD] reference/toponim.sqlite -> r2://{toponym_bucket}/{toponym_key}")
         if s3:
-            s3.upload_file(str(toponim), toponym_bucket, toponym_key, ExtraArgs={"ContentType": "application/vnd.sqlite3", "CacheControl": "public,max-age=31536000,immutable"})
+            s3.upload_file(str(toponym), toponym_bucket, toponym_key, ExtraArgs={"ContentType": "application/vnd.sqlite3", "CacheControl": "public,max-age=31536000,immutable"})
 
     manifest = {"schema_version": 1, "bucket": bucket, "prefix": prefix, "objects": objects}
     manifest_key = f"{prefix}/runtime-manifest.json" if prefix else "runtime-manifest.json"

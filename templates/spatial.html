@@ -31,8 +31,9 @@
       </section>
 
       <section class="analysis-preferences settings-group-divider" aria-label="Skenario banjir dan preferensi angka">
-        <label class="settings-field" data-help="Memilih hasil precompute HEC-HMS berdasarkan kala ulang banjir."><span class="field-label-line">Banjir Kala Ulang <button class="info-tooltip" type="button" aria-label="Informasi banjir kala ulang">i</button></span><select id="floodReturnPeriodSelect" aria-label="Pilihan banjir kala ulang" disabled><option value="">Memuat skenario…</option></select></label>
-        <label class="settings-field" data-help="Memilih koma atau titik sebagai pemisah desimal pada tampilan koordinat."><span class="field-label-line">Pemisah desimal <button class="info-tooltip" type="button" aria-label="Informasi pemisah desimal">i</button></span><select id="floodDecimalSeparatorSelect" aria-label="Pilihan pemisah desimal"><option value="," selected>Koma (,)</option><option value=".">Titik (.)</option></select></label>
+        <label class="settings-field" data-help="Memilih hasil pemodelan berdasarkan kala ulang banjir."><span class="field-label-line">Banjir Kala Ulang <button class="info-tooltip" type="button" aria-label="Informasi banjir kala ulang">i</button></span><select id="floodReturnPeriodSelect" aria-label="Pilihan banjir kala ulang" disabled><option value="">Memuat skenario…</option></select></label>
+        <label class="settings-field" data-help="Data 6 jam diambil langsung dari DSS. Data 12 dan 24 jam dihitung melalui konvolusi data hujan dan aliran, lalu dilakukan routing ulang sepanjang sungai berdasarkan parameter model. Durasi 12 jam digunakan sebagai pilihan awal."><span class="field-label-line">Durasi Hujan <button class="info-tooltip" type="button" aria-label="Informasi durasi hujan">i</button></span><select id="floodRainfallDurationSelect" aria-label="Pilihan durasi hujan"><option value="6">6 jam</option><option value="12" selected>12 jam</option><option value="24">24 jam</option></select></label>
+        <label class="settings-field" data-help="Memilih koma atau titik sebagai pemisah desimal pada angka yang ditampilkan di aplikasi."><span class="field-label-line">Pemisah desimal <button class="info-tooltip" type="button" aria-label="Informasi pemisah desimal">i</button></span><select id="floodDecimalSeparatorSelect" aria-label="Pilihan pemisah desimal"><option value="," selected>Koma (,)</option><option value=".">Titik (.)</option></select></label>
       </section>
 
       <details class="advanced panel-section flood-advanced-settings">
@@ -208,7 +209,7 @@
       <div class="modal-card warning-modal"><div class="warning-icon"><i data-lucide="triangle-alert"></i></div><h2 id="modelUnavailableTitle">Data Pemodelan Banjir Kala Ulang Belum Tersedia</h2><p>Penelusuran Banjir Tidak Dapat Diproses</p><button id="acceptModelUnavailable" class="btn btn-primary" type="button">Mengerti</button></div>
     </div>
     <div id="usageNoticeModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="usageNoticeTitle">
-      <div class="modal-card warning-modal usage-notice-modal"><div class="warning-icon neutral-icon"><i data-lucide="info"></i></div><span class="eyebrow">PEMBERITAHUAN PENGGUNAAN</span><h2 id="usageNoticeTitle">Hasil Penelusuran Banjir Berbasis Model</h2><p>Informasi pada peta dan grafik merupakan hasil estimasi dari pemodelan banjir. Data ini menggambarkan perkiraan pola aliran, dinamika debit, dan waktu puncak banjir sepanjang sungai. Gunakan informasi ini sebagai referensi pendukung, bukan sebagai satu-satunya dasar pengambilan keputusan.</p><button id="acceptUsageNotice" class="btn btn-primary" type="button">Mengerti</button></div>
+      <div class="modal-card warning-modal usage-notice-modal"><div class="warning-icon neutral-icon"><i data-lucide="info"></i></div><span class="eyebrow">PEMBERITAHUAN PENGGUNAAN</span><h2 id="usageNoticeTitle">Hasil Penelusuran Banjir Berbasis Model</h2><p>Informasi pada peta dan grafik merupakan hasil estimasi dari pemodelan banjir. Data ini menggambarkan perkiraan pola aliran, dinamika debit, dan waktu puncak banjir sepanjang sungai. Gunakan informasi ini sebagai referensi pendukung, bukan sebagai satu-satunya dasar pengambilan keputusan.</p><div class="usage-notice-links"><button id="usageNoticeDefinitionBtn" class="btn btn-neutral" type="button"><i data-lucide="circle-help"></i>Istilah &amp; Definisi</button><button id="usageNoticeMethodologyBtn" class="btn btn-neutral" type="button"><i data-lucide="book-open-text"></i>Metodologi &amp; Sumber Data</button></div><button id="acceptUsageNotice" class="btn btn-primary" type="button">Mengerti</button></div>
     </div>
 
     <div id="definitionModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
@@ -317,7 +318,7 @@ Outlet</code></pre>
             <li><b>Geometri saluran:</b> penampang trapezoidal.</li>
           </ul>
           <p>Parameter tidak dianggap sebagai satu nilai yang mewakili seluruh DAS. Nilai parameter dapat berbeda antar-sub-DAS dan antar-reach sesuai model sumber.</p>
-          <p>Preprocessing hanya mengubah format dan struktur penyimpanan agar efisien untuk web. Preprocessing tidak mengganti metode atau menghitung ulang hasil hidrologi HEC-HMS.</p>
+          <p>Untuk durasi 6 jam, preprocessing membaca hasil HEC-HMS tanpa menghitung ulang. Untuk durasi 12 dan 24 jam, preprocessing menghitung konvolusi setiap sub-DAS dan menjalankan routing ulang Muskingum–Cunge berdasarkan parameter pada berkas basin, tanpa faktor kalibrasi.</p>
         </article>
         <article>
           <h3>Sumber data model</h3>
@@ -349,7 +350,7 @@ Outlet</code></pre>
         </article>
         <article>
           <h3>Cara membaca hasil</h3>
-          <p>Angka dan grafik pada aplikasi adalah hasil model, bukan pengukuran langsung di sungai. Skenario 2, 10, dan 25 tahun merupakan label pada hasil HEC-HMS. “Selisih waktu puncak” adalah perbedaan waktu puncak dua hidrograf, bukan waktu tempuh hidraulik formal.</p>
+          <p>Angka dan grafik pada aplikasi adalah hasil model, bukan pengukuran langsung di sungai. Skenario 2, 10, dan 25 tahun merupakan label pada hasil HEC-HMS. Hidrograf durasi 6 jam berasal langsung dari DSS. Pilihan 12 dan 24 jam dihitung melalui konvolusi unit hydrograph dengan hujan efektif yang diperpanjang tanpa mengubah totalnya, kemudian ditambahkan baseflow DSS. Seluruh debit sub-DAS selanjutnya digabungkan mengikuti topologi dan dirouting ulang pada setiap reach menggunakan parameter Muskingum–Cunge dari berkas basin. “Selisih waktu puncak” adalah perbedaan waktu puncak dua hidrograf, bukan waktu tempuh hidraulik formal.</p>
           <div class="app-definition-note"><b>Catatan:</b> aplikasi ini tidak menghitung kedalaman, tinggi muka air, kecepatan, atau luas genangan.</div>
         </article>
       </div>
@@ -370,5 +371,5 @@ window.FLOOD_CONFIG = {
 </script>
 <script defer src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" fetchpriority="high"></script>
 <script defer src="/static/js/spatial.js?v=2.2.5-dta-river"></script>
-<script defer src="/static/js/flood-routing.js?v=2.2.5-first-point"></script>
+<script defer src="/static/js/flood-routing.js?v=2.2.7-rain-convolution"></script>
 {% endblock %}

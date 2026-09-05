@@ -58,6 +58,7 @@
     coordinatePreview: null,
     coordinatePreviewPopup: null,
     scenario: null,
+    rainfallDuration: '12',
     playbackRate: 1,
     lineWidthScale: 1,
     idlePopup: null,
@@ -130,6 +131,15 @@
     return Number.isFinite(value) && value > 0 ? value : 300;
   }
 
+  function currentRainfallDuration() {
+    const value = Number(state.rainfallDuration || $('floodRainfallDurationSelect')?.value || 12);
+    return [6, 12, 24].includes(value) ? value : 12;
+  }
+
+  function selectedSeriesKey(ids = state.selectedReachIds) {
+    return `${[...ids].sort().join(',')}|${currentRainfallDuration()}h`;
+  }
+
   function snapWarningThreshold(radius = currentSnapRadius()) {
     return Math.max(150, Math.min(500, Number(radius || 300) * 0.65));
   }
@@ -200,7 +210,7 @@
       setStatus('Tambahkan minimal satu Titik Kontrol untuk menampilkan Visualisasi Aliran.', 'warning');
     }
     applyLayerVisibility();
-    if (state.routingVisualizationVisible && hasBoundary && state.seriesKey !== [...state.selectedReachIds].sort().join(',')) {
+    if (state.routingVisualizationVisible && hasBoundary && state.seriesKey !== selectedSeriesKey()) {
       loadSelectedSeries(state.selectedReachIds).catch(() => {});
     }
   }
@@ -537,7 +547,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         cache: 'no-store',
-        body: JSON.stringify({ scenario: state.scenario, snap_radius_m: currentSnapRadius(), points }),
+        body: JSON.stringify({ scenario: state.scenario, duration_hours: currentRainfallDuration(), snap_radius_m: currentSnapRadius(), points }),
       });
       if (!response.ok) {
         let data = null;
@@ -1447,7 +1457,7 @@
   async function inspectIdleLocation(lon, lat) {
     const serial = ++state.idleInspectSerial;
     try {
-      const payload = await postJson('/api/hec-routing/observe', { scenario: state.scenario, snap_radius_m: currentSnapRadius(), points: [{ point_id: '__inspect__', label: 'Lokasi inspeksi', lon, lat }] });
+      const payload = await postJson('/api/hec-routing/observe', { scenario: state.scenario, duration_hours: currentRainfallDuration(), snap_radius_m: currentSnapRadius(), points: [{ point_id: '__inspect__', label: 'Lokasi inspeksi', lon, lat }] });
       if (serial !== state.idleInspectSerial) return;
       const metric = payload?.points?.[0];
       if (!metric) return;
@@ -1666,13 +1676,13 @@
       return;
     }
     const payloadPoints = hydrographExportPoints();
-    const key = JSON.stringify({ scenario: state.scenario, radius: currentSnapRadius(), points: payloadPoints });
+    const key = JSON.stringify({ scenario: state.scenario, duration: currentRainfallDuration(), radius: currentSnapRadius(), points: payloadPoints });
     if (!force && state.observationKey === key && state.observationData) return renderObservationSummary(state.observationData);
     const serial = ++state.observationRequestSerial;
     setObservationStatus('Membaca hidrograf sesuai posisi hulu/hilir pada reach2d dan menghitung jarak serta selisih waktu puncak…', 'busy');
     try {
       const [payload] = await Promise.all([
-        postJson('/api/hec-routing/observe', { scenario: state.scenario, snap_radius_m: currentSnapRadius(), points: payloadPoints }),
+        postJson('/api/hec-routing/observe', { scenario: state.scenario, duration_hours: currentRainfallDuration(), snap_radius_m: currentSnapRadius(), points: payloadPoints }),
         ensureModelLayers(),
       ]);
       if (serial !== state.observationRequestSerial) return;
@@ -1992,8 +2002,8 @@
   }
 
   async function loadSelectedSeries(ids) {
-    const key = [...ids].sort().join(',');
-    if (!key) return;
+    if (!ids.length) return;
+    const key = selectedSeriesKey(ids);
     const serial = ++state.requestSerial;
     stopAnimation();
     state.series = null;
@@ -2008,7 +2018,7 @@
     setLayerVisible(REACH_MOTION_LAYER, false);
     setStatus('Memuat Q(t) jalur terpilih dari precompute HEC-HMS…', 'busy');
     try {
-      const payload = await postJson('/api/hec-routing/series', { reach_ids: ids, scenario: state.scenario });
+      const payload = await postJson('/api/hec-routing/series', { reach_ids: ids, scenario: state.scenario, duration_hours: currentRainfallDuration() });
       if (serial !== state.requestSerial) return;
       state.series = payload;
       state.seriesKey = key;
@@ -2224,6 +2234,25 @@
     await refreshObservationComparison(true);
   }
 
+  async function changeRainfallDuration(value) {
+    const next = Number(value);
+    if (![6, 12, 24].includes(next) || next === currentRainfallDuration()) return;
+    stopAnimation();
+    resetFeatureStates(state.selectedReachIds);
+    state.rainfallDuration = String(next);
+    state.series = null;
+    state.seriesKey = '';
+    state.observationData = null;
+    state.observationKey = '';
+    state.idleInspectSerial += 1;
+    destroyIdleChart();
+    if (state.idlePopup) { state.idlePopup.remove(); state.idlePopup = null; }
+    if (state.routingVisualizationVisible && state.selectedReachIds.length) {
+      await loadSelectedSeries(state.selectedReachIds);
+    }
+    await refreshObservationComparison(true);
+  }
+
   async function initialize() {
     initDockedPanels();
     ensureControlPointPreviewLayers();
@@ -2241,6 +2270,9 @@
     try {
       state.info = await fetchJson('/api/hec-routing/info');
       populateScenarioSelect();
+      const durationSelect = $('floodRainfallDurationSelect');
+      state.rainfallDuration = String(state.info?.default_rainfall_duration_hours || durationSelect?.value || 12);
+      if (durationSelect) durationSelect.value = state.rainfallDuration;
     } catch (err) {
       setStatus(`Jaringan HEC-HMS belum dapat dimuat: ${err.message || err}`, 'warning');
       return;
@@ -2274,6 +2306,9 @@
     });
     $('floodReturnPeriodSelect')?.addEventListener('change', event => {
       changeScenario(event.target.value).catch(err => setStatus(`Kala ulang belum dapat dimuat: ${err.message || err}`, 'warning'));
+    });
+    $('floodRainfallDurationSelect')?.addEventListener('change', event => {
+      changeRainfallDuration(event.target.value).catch(err => setStatus(`Durasi hujan belum dapat diterapkan: ${err.message || err}`, 'warning'));
     });
     $('snapRadius')?.addEventListener('change', () => {
       state.observationKey = '';
