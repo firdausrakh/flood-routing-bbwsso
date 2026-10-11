@@ -52,6 +52,10 @@ shell.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+def maintenance_mode_enabled() -> bool:
+    return os.getenv("MAINTENANCE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @shell.middleware("http")
 async def shell_cache_headers(request: Request, call_next):
     """Cache and compress the lightweight first-paint path too.
@@ -63,7 +67,7 @@ async def shell_cache_headers(request: Request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/static/"):
         response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
-    elif request.url.path == "/":
+    elif request.url.path in {"/", "/maintenance"}:
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
@@ -82,6 +86,11 @@ def index(request: Request):
             "map_assets_version": os.getenv("R2_MAP_ASSETS_VERSION", "").strip() or SHELL_VERSION,
         },
     )
+
+
+@shell.get("/maintenance")
+def maintenance(request: Request):
+    return templates.TemplateResponse(request=request, name="maintenance.html", status_code=503)
 
 
 _core_app: Any | None = None
@@ -122,6 +131,11 @@ class LazyCoreDispatcher:
         path = scope.get("path", "")
         if scope.get("type") not in {"http", "websocket"}:
             await shell(scope, receive, send)
+            return
+
+        if maintenance_mode_enabled() and not path.startswith("/static/"):
+            maintenance_scope = {**scope, "path": "/maintenance", "raw_path": b"/maintenance"}
+            await shell(maintenance_scope, receive, send)
             return
 
         # The root page and static files never need the reference/routing runtime.

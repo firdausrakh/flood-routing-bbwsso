@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#223468">
+  <title>Sedang dalam pemeliharaan</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css?v=1.6.4-min10">
+  <link rel="stylesheet" href="/static/css/spatial.css?v=1.0.1.1">
+  <style>
+    .maintenance-page { min-height: 100vh; }
+    .maintenance-page .modal-backdrop { position: fixed; }
+    .maintenance-page .maintenance-illustration { display: block; height: 156px; margin: -8px auto 8px; max-width: 100%; object-fit: contain; width: 156px; }
+    .maintenance-page .usage-notice-modal { padding: 30px 32px; }
+    @media (max-width: 520px) { .maintenance-page .usage-notice-modal { padding: 26px 22px; } }
+  </style>
+</head>
+<body class="spatial-page maintenance-page">
+  <div class="modal-backdrop" role="alert" aria-live="assertive">
+  <main class="modal-card warning-modal usage-notice-modal">
+    <img class="maintenance-illustration" src="/static/images/maintenance-illustration.png" alt="Ilustrasi perbaikan aplikasi">
+    <span class="eyebrow">PEMBERITAHUAN PEMELIHARAAN</span>
+    <h1>Web Sedang dalam Pemeliharaan</h1>
+    <p>Web sedang diperbarui untuk peningkatan fitur dan pengembangan layanan. Selama pemeliharaan berlangsung, aplikasi dan data tidak dapat diakses. Silakan kembali beberapa saat lagi.</p>
+  </main>
+  </div>
+</body>
+</html>

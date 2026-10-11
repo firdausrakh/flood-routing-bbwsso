@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 import unittest
 
@@ -74,6 +75,21 @@ class ShellPerformanceTests(unittest.TestCase):
         self.assertIn('/static/js/flood-routing.js?v=2.2.5-first-point', html)
         self.assertNotIn('/static/js/hss.js', html)
         self.assertNotIn('id="appHeader"', html)
+
+    def test_maintenance_mode_blocks_shell_and_api(self):
+        previous = os.environ.get("MAINTENANCE_MODE")
+        os.environ["MAINTENANCE_MODE"] = "true"
+        try:
+            for path in ("/", "/api/health"):
+                status, headers, body = asyncio.run(_asgi_get(path))
+                self.assertEqual(status, 503)
+                self.assertEqual(headers["cache-control"], "no-cache")
+                self.assertIn("Sedang dalam pemeliharaan", body.decode("utf-8"))
+        finally:
+            if previous is None:
+                os.environ.pop("MAINTENANCE_MODE", None)
+            else:
+                os.environ["MAINTENANCE_MODE"] = previous
 
 
     def test_frontend_uses_docked_layout_and_keeps_model_internals_hidden(self):
